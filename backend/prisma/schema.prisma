@@ -1,0 +1,482 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  ASSISTANT
+  ACCOUNTANT
+  FINANCE_MANAGER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  BANNED
+}
+
+enum ManagedStudentStatus {
+  ACTIVE
+  PAUSED
+  WITHDRAWN
+  COMPLETED
+}
+
+enum AccountingGroupType {
+  REGULAR
+  REVIEW
+  EXAMS
+  OTHER
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+enum BillingPeriodStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum ChargeStatus {
+  DRAFT
+  DUE
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum AccountingPaymentMethod {
+  INSTAPAY
+  VODAFONE_CASH
+  BANK_TRANSFER
+  CASH
+  OTHER
+}
+
+enum AccountingPaymentStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  REVERSED
+}
+
+enum AdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVERSED
+}
+
+enum AlertStatus {
+  OPEN
+  DISMISSED
+  CONTACTED
+  RESOLVED
+}
+
+model User {
+  id                        String     @id @default(uuid())
+  name                      String
+  email                     String     @unique
+  phone                     String?
+  password_hash             String
+  role                      Role       @default(STUDENT)
+  status                    UserStatus @default(ACTIVE)
+  email_verified            Boolean    @default(false)
+  email_verification_token  String?    @unique
+  password_reset_token      String?    @unique
+  password_reset_expires_at DateTime?
+  active_devices            Int        @default(0)
+  created_at                DateTime   @default(now())
+  updated_at                DateTime   @updatedAt
+
+  profile          Profile?
+  sessions         Session[]
+  audit_logs       AuditLog[]
+  managed_student  ManagedStudent?
+
+  @@index([email])
+  @@index([role, status])
+  @@map("users")
+}
+
+model ManagedStudent {
+  id             String               @id @default(uuid())
+  code           String               @unique
+  user_id        String?              @unique
+  full_name      String
+  student_phone  String?
+  guardian_name  String?
+  guardian_phone String?
+  status         ManagedStudentStatus @default(ACTIVE)
+  joined_at      DateTime
+  paused_at      DateTime?
+  withdrawn_at   DateTime?
+  exit_reason    String?
+  notes                    String?
+  credit_balance           Decimal              @default(0) @db.Decimal(12, 2)
+  created_at               DateTime             @default(now())
+  updated_at               DateTime             @updatedAt
+
+  user        User?               @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  enrollments StudentEnrollment[]
+  charges     MonthlyCharge[]
+  payments    AccountingPayment[]
+  discounts   StudentDiscount[]
+  refunds     StudentRefund[]
+  alerts      CollectionAlert[]
+
+  @@index([full_name])
+  @@index([student_phone])
+  @@index([guardian_phone])
+  @@index([status])
+  @@map("accounting_students")
+}
+
+model AccountingGroup {
+  id                         String              @id @default(uuid())
+  code                       String              @unique
+  name                       String
+  type                       AccountingGroupType @default(REGULAR)
+  teacher_name               String?
+  level                      String?
+  default_session_price      Decimal             @default(300) @db.Decimal(12, 2)
+  default_sessions_per_month Int
+  default_student_target     Int?
+  default_revenue_target     Decimal?            @db.Decimal(12, 2)
+  active                     Boolean             @default(true)
+  starts_at                  DateTime?
+  ends_at                    DateTime?
+  created_at                 DateTime            @default(now())
+  updated_at                 DateTime            @updatedAt
+
+  enrollments   StudentEnrollment[]
+  monthly_plans MonthlyGroupPlan[]
+  charges       MonthlyCharge[]
+  discounts     StudentDiscount[]
+  refunds       StudentRefund[]
+
+  @@index([name])
+  @@index([type, active])
+  @@map("accounting_groups")
+}
+
+model StudentEnrollment {
+  id                        String           @id @default(uuid())
+  student_id                String
+  group_id                  String
+  status                    EnrollmentStatus @default(ACTIVE)
+  starts_at                 DateTime
+  ends_at                   DateTime?
+  exit_reason               String?
+  custom_session_price      Decimal?         @db.Decimal(12, 2)
+  custom_sessions_per_month Int?
+  notes                     String?
+  created_at                DateTime         @default(now())
+  updated_at                DateTime         @updatedAt
+
+  student ManagedStudent  @relation(fields: [student_id], references: [id], onDelete: Restrict)
+  group   AccountingGroup @relation(fields: [group_id], references: [id], onDelete: Restrict)
+  charges MonthlyCharge[]
+
+  @@index([student_id, status])
+  @@index([group_id, status])
+  @@index([starts_at, ends_at])
+  @@map("student_enrollments")
+}
+
+model BillingPeriod {
+  id             String              @id @default(uuid())
+  year           Int
+  month          Int
+  status         BillingPeriodStatus @default(DRAFT)
+  opened_at      DateTime?
+  opened_by_id   String?
+  closed_at      DateTime?
+  closed_by_id   String?
+  reopened_at    DateTime?
+  reopened_by_id String?
+  created_at     DateTime            @default(now())
+  updated_at     DateTime            @updatedAt
+
+  group_plans MonthlyGroupPlan[]
+  charges     MonthlyCharge[]
+  discounts   StudentDiscount[]
+  refunds     StudentRefund[]
+  alerts      CollectionAlert[]
+
+  @@unique([year, month])
+  @@index([status])
+  @@map("billing_periods")
+}
+
+model MonthlyGroupPlan {
+  id             String   @id @default(uuid())
+  period_id      String
+  group_id       String
+  sessions_count Int
+  session_price  Decimal  @db.Decimal(12, 2)
+  student_target Int?
+  revenue_target Decimal? @db.Decimal(12, 2)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  period  BillingPeriod   @relation(fields: [period_id], references: [id], onDelete: Restrict)
+  group   AccountingGroup @relation(fields: [group_id], references: [id], onDelete: Restrict)
+  charges MonthlyCharge[]
+
+  @@unique([period_id, group_id])
+  @@index([group_id])
+  @@map("monthly_group_plans")
+}
+
+model MonthlyCharge {
+  id                String       @id @default(uuid())
+  period_id         String
+  monthly_plan_id   String
+  student_id        String
+  enrollment_id     String
+  group_id          String
+  sessions_count    Int
+  session_price     Decimal      @db.Decimal(12, 2)
+  gross_amount      Decimal      @db.Decimal(12, 2)
+  discount_amount   Decimal      @default(0) @db.Decimal(12, 2)
+  adjustment_amount Decimal      @default(0) @db.Decimal(12, 2)
+  net_amount        Decimal      @db.Decimal(12, 2)
+  due_date          DateTime?
+  status            ChargeStatus @default(DUE)
+  notes             String?
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+
+  period       BillingPeriod       @relation(fields: [period_id], references: [id], onDelete: Restrict)
+  monthly_plan MonthlyGroupPlan    @relation(fields: [monthly_plan_id], references: [id], onDelete: Restrict)
+  student      ManagedStudent      @relation(fields: [student_id], references: [id], onDelete: Restrict)
+  enrollment   StudentEnrollment   @relation(fields: [enrollment_id], references: [id], onDelete: Restrict)
+  group        AccountingGroup     @relation(fields: [group_id], references: [id], onDelete: Restrict)
+  allocations  PaymentAllocation[]
+  discounts    StudentDiscount[]
+  refunds      StudentRefund[]
+
+  @@unique([period_id, enrollment_id])
+  @@index([student_id, period_id])
+  @@index([group_id, period_id])
+  @@index([status, due_date])
+  @@map("monthly_charges")
+}
+
+model AccountingPayment {
+  id                 String                  @id @default(uuid())
+  student_id         String
+  amount             Decimal                 @db.Decimal(12, 2)
+  method             AccountingPaymentMethod
+  status             AccountingPaymentStatus @default(PENDING_REVIEW)
+  paid_at            DateTime
+  external_reference String?
+  notes              String?
+  recorded_by_id     String?
+  reviewed_by_id     String?
+  reviewed_at        DateTime?
+  rejection_reason   String?
+  reversed_at        DateTime?
+  reversal_reason    String?
+  created_at         DateTime                @default(now())
+  updated_at         DateTime                @updatedAt
+
+  student     ManagedStudent      @relation(fields: [student_id], references: [id], onDelete: Restrict)
+  allocations PaymentAllocation[]
+  receipts    PaymentReceipt[]
+  refunds     StudentRefund[]
+
+  @@index([student_id, paid_at])
+  @@index([status, paid_at])
+  @@index([external_reference])
+  @@map("accounting_payments")
+}
+
+model PaymentAllocation {
+  id         String   @id @default(uuid())
+  payment_id String
+  charge_id  String
+  amount     Decimal  @db.Decimal(12, 2)
+  created_at DateTime @default(now())
+
+  payment AccountingPayment @relation(fields: [payment_id], references: [id], onDelete: Restrict)
+  charge  MonthlyCharge     @relation(fields: [charge_id], references: [id], onDelete: Restrict)
+
+  @@unique([payment_id, charge_id])
+  @@index([charge_id])
+  @@map("payment_allocations")
+}
+
+model PaymentReceipt {
+  id             String   @id @default(uuid())
+  payment_id     String
+  original_name  String
+  storage_key    String   @unique
+  mime_type      String
+  size_bytes     Int
+  checksum       String?
+  uploaded_by_id String?
+  created_at     DateTime @default(now())
+
+  payment AccountingPayment @relation(fields: [payment_id], references: [id], onDelete: Restrict)
+
+  @@index([payment_id])
+  @@map("payment_receipts")
+}
+
+model StudentDiscount {
+  id             String           @id @default(uuid())
+  student_id     String
+  group_id       String
+  period_id      String
+  charge_id      String
+  amount         Decimal          @db.Decimal(12, 2)
+  reason         String
+  status         AdjustmentStatus @default(APPROVED)
+  created_by_id  String?
+  approved_by_id String?
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
+
+  student ManagedStudent  @relation(fields: [student_id], references: [id], onDelete: Restrict)
+  group   AccountingGroup @relation(fields: [group_id], references: [id], onDelete: Restrict)
+  period  BillingPeriod   @relation(fields: [period_id], references: [id], onDelete: Restrict)
+  charge  MonthlyCharge   @relation(fields: [charge_id], references: [id], onDelete: Restrict)
+
+  @@index([student_id, period_id])
+  @@index([group_id, period_id])
+  @@map("student_discounts")
+}
+
+model StudentRefund {
+  id                  String                  @id @default(uuid())
+  student_id          String
+  group_id            String?
+  period_id           String?
+  charge_id           String?
+  payment_id          String?
+  sessions_count      Int?
+  session_unit_price  Decimal?                @db.Decimal(12, 2)
+  amount              Decimal                 @db.Decimal(12, 2)
+  reason              String
+  method              AccountingPaymentMethod
+  external_reference  String?
+  receipt_storage_key String?
+  status              AdjustmentStatus        @default(APPROVED)
+  created_by_id       String?
+  approved_by_id      String?
+  refunded_at         DateTime
+  created_at          DateTime                @default(now())
+
+  student ManagedStudent     @relation(fields: [student_id], references: [id], onDelete: Restrict)
+  group   AccountingGroup?   @relation(fields: [group_id], references: [id], onDelete: Restrict)
+  period  BillingPeriod?     @relation(fields: [period_id], references: [id], onDelete: Restrict)
+  charge  MonthlyCharge?     @relation(fields: [charge_id], references: [id], onDelete: Restrict)
+  payment AccountingPayment? @relation(fields: [payment_id], references: [id], onDelete: Restrict)
+
+  @@index([student_id, refunded_at])
+  @@index([period_id])
+  @@map("student_refunds")
+}
+
+model CompanyExpense {
+  id                  String                  @id @default(uuid())
+  category            String
+  amount              Decimal                 @db.Decimal(12, 2)
+  method              AccountingPaymentMethod
+  spent_at            DateTime
+  description         String
+  external_reference  String?
+  receipt_storage_key String?
+  recorded_by_id      String?
+  status              AdjustmentStatus        @default(APPROVED)
+  created_at          DateTime                @default(now())
+  updated_at          DateTime                @updatedAt
+
+  @@index([spent_at])
+  @@index([category])
+  @@map("company_expenses")
+}
+
+model CollectionAlert {
+  id                String      @id @default(uuid())
+  student_id        String
+  period_id         String
+  status            AlertStatus @default(OPEN)
+  message_template  String?
+  last_contacted_at DateTime?
+  contacted_by_id   String?
+  resolved_at       DateTime?
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  student ManagedStudent @relation(fields: [student_id], references: [id], onDelete: Restrict)
+  period  BillingPeriod  @relation(fields: [period_id], references: [id], onDelete: Restrict)
+
+  @@unique([student_id, period_id])
+  @@index([status])
+  @@map("collection_alerts")
+}
+
+model Profile {
+  id         String   @id @default(uuid())
+  user_id    String   @unique
+  phone      String?
+  city       String?
+  school     String?
+  level      String?
+  avatar     String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  user_id       String
+  refresh_token String   @unique
+  device_info   String?
+  ip_address    String?
+  expires_at    DateTime
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([refresh_token])
+  @@map("sessions")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  user_id       String?
+  action        String
+  entity        String?
+  entity_id     String?
+  payload_json  String?
+  is_suspicious Boolean  @default(false)
+  created_at    DateTime @default(now())
+
+  user User? @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([action])
+  @@index([is_suspicious])
+  @@map("audit_logs")
+}

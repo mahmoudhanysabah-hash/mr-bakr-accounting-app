@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+
+# Environment files with real secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Runtime logs and temporary files
+*.log
+*.out.log
+*.err.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# Local/private accounting data
+backend/backups/
+backend/import-previews/
+backend/check-users.js
+backend/import-history.ts
+backend/prisma/seed-feb2025*.js
+backend/scripts/analyze_2025_months.py
+
+# Nested duplicate workspace copy
+accounting_app/
+
+# Local tool state
+.codex-run-logs/
+.DS_Store
+Thumbs.db
