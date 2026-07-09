@@ -20,7 +20,7 @@ import { AuditService } from '../common/audit.service';
 import { Role, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-const accountingRoles = [Role.ADMIN, Role.FINANCE_MANAGER, Role.ACCOUNTANT] as const;
+const staffRoles = [Role.ADMIN, Role.FINANCE_MANAGER, Role.ACCOUNTANT, Role.ASSISTANT] as const;
 
 class CreateAdminUserDto {
   @IsString()
@@ -34,7 +34,7 @@ class CreateAdminUserDto {
   @MinLength(8)
   password: string;
 
-  @IsIn([...accountingRoles])
+  @IsIn([...staffRoles])
   role: Role;
 
   @IsOptional()
@@ -62,7 +62,7 @@ class UpdateAdminUserDto {
   password?: string;
 
   @IsOptional()
-  @IsIn([...accountingRoles])
+  @IsIn([...staffRoles])
   role?: Role;
 
   @IsOptional()

@@ -1,0 +1,694 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  AssistantAssignmentStatus,
+  AssistantResponsibility,
+  AttendanceStatus,
+  GuardianContactStatus,
+  Role,
+  TeachingSessionStatus,
+  UserStatus,
+} from '@prisma/client';
+import { AuditService } from '../common/audit.service';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  AssignAssistantGroupDto,
+  AssignAssistantStudentsDto,
+  CreateAcademicFollowUpDto,
+  CreateGuardianContactDto,
+  CreateTeachingSessionDto,
+  UpdateAssignmentStatusDto,
+  UpdateTeachingSessionStatusDto,
+  UpsertAttendanceDto,
+} from './dto/teaching.dto';
+
+const managerRoles = new Set<Role>([Role.ADMIN, Role.FINANCE_MANAGER]);
+
+@Injectable()
+export class TeachingService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
+
+  private isManager(user?: { role?: Role }) {
+    return Boolean(user?.role && managerRoles.has(user.role));
+  }
+
+  private responsibilityFilter(responsibility: AssistantResponsibility) {
+    return [responsibility, AssistantResponsibility.FULL];
+  }
+
+  private async ensureAssistant(assistantId: string) {
+    const assistant = await this.prisma.user.findUnique({ where: { id: assistantId } });
+    if (!assistant || assistant.role !== Role.ASSISTANT || assistant.status !== UserStatus.ACTIVE) {
+      throw new BadRequestException('Assistant account is not active or does not exist');
+    }
+    return assistant;
+  }
+
+  private async ensureGroup(groupId: string) {
+    const group = await this.prisma.accountingGroup.findUnique({ where: { id: groupId } });
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+    return group;
+  }
+
+  private async ensureStudentInGroup(studentId: string, groupId: string) {
+    const enrollment = await this.prisma.studentEnrollment.findFirst({
+      where: {
+        student_id: studentId,
+        group_id: groupId,
+        status: 'ACTIVE',
+        student: { status: 'ACTIVE' },
+      },
+      include: { student: true },
+    });
+    if (!enrollment) {
+      throw new BadRequestException('Student is not active in this group');
+    }
+    return enrollment;
+  }
+
+  private async ensureGroupAccess(
+    user: any,
+    groupId: string,
+    responsibility: AssistantResponsibility,
+  ) {
+    if (this.isManager(user)) {
+      return;
+    }
+    if (user?.role !== Role.ASSISTANT) {
+      throw new ForbiddenException('This action is not allowed');
+    }
+
+    const count = await this.prisma.assistantGroupAssignment.count({
+      where: {
+        assistant_id: user.id,
+        group_id: groupId,
+        status: AssistantAssignmentStatus.ACTIVE,
+        responsibility: { in: this.responsibilityFilter(responsibility) },
+      },
+    });
+    if (count === 0) {
+      throw new ForbiddenException('Assistant is not assigned to this group');
+    }
+  }
+
+  private async ensureAnyGroupAccess(user: any, groupId: string) {
+    if (this.isManager(user)) {
+      return;
+    }
+    if (user?.role !== Role.ASSISTANT) {
+      throw new ForbiddenException('This action is not allowed');
+    }
+    const count = await this.prisma.assistantGroupAssignment.count({
+      where: {
+        assistant_id: user.id,
+        group_id: groupId,
+        status: AssistantAssignmentStatus.ACTIVE,
+      },
+    });
+    if (count === 0) {
+      throw new ForbiddenException('Assistant is not assigned to this group');
+    }
+  }
+
+  private async assignedGroupIds(user: any) {
+    if (this.isManager(user)) {
+      return undefined;
+    }
+    if (user?.role !== Role.ASSISTANT) {
+      return [];
+    }
+    const assignments = await this.prisma.assistantGroupAssignment.findMany({
+      where: {
+        assistant_id: user.id,
+        status: AssistantAssignmentStatus.ACTIVE,
+      },
+      select: { group_id: true },
+      distinct: ['group_id'],
+    });
+    return assignments.map((assignment) => assignment.group_id);
+  }
+
+  private userSelect() {
+    return { id: true, name: true, email: true, phone: true, role: true, status: true } as const;
+  }
+
+  listAssistants() {
+    return this.prisma.user.findMany({
+      where: { role: Role.ASSISTANT },
+      select: this.userSelect(),
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async assignGroup(dto: AssignAssistantGroupDto, actorId?: string) {
+    await this.ensureAssistant(dto.assistantId);
+    await this.ensureGroup(dto.groupId);
+
+    const assignment = await this.prisma.assistantGroupAssignment.upsert({
+      where: {
+        assistant_id_group_id_responsibility: {
+          assistant_id: dto.assistantId,
+          group_id: dto.groupId,
+          responsibility: dto.responsibility,
+        },
+      },
+      create: {
+        assistant_id: dto.assistantId,
+        group_id: dto.groupId,
+        responsibility: dto.responsibility,
+        assigned_by_id: actorId,
+        starts_at: dto.startsAt ? new Date(dto.startsAt) : new Date(),
+        notes: dto.notes?.trim() || null,
+      },
+      update: {
+        status: AssistantAssignmentStatus.ACTIVE,
+        assigned_by_id: actorId,
+        starts_at: dto.startsAt ? new Date(dto.startsAt) : undefined,
+        ends_at: null,
+        notes: dto.notes?.trim() || null,
+      },
+      include: {
+        assistant: { select: this.userSelect() },
+        group: true,
+      },
+    });
+
+    await this.audit.log({
+      userId: actorId,
+      action: 'ASSISTANT_GROUP_ASSIGNED',
+      entity: 'assistant_group_assignment',
+      entityId: assignment.id,
+      payload: {
+        assistantId: dto.assistantId,
+        groupId: dto.groupId,
+        responsibility: dto.responsibility,
+      },
+    });
+
+    return assignment;
+  }
+
+  async listGroupAssignments(user: any, assistantId?: string, groupId?: string) {
+    const scopedAssistantId = this.isManager(user) ? assistantId : user?.id;
+    return this.prisma.assistantGroupAssignment.findMany({
+      where: {
+        assistant_id: scopedAssistantId,
+        group_id: groupId,
+      },
+      include: {
+        assistant: { select: this.userSelect() },
+        group: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
+  async updateGroupAssignmentStatus(id: string, dto: UpdateAssignmentStatusDto, actorId?: string) {
+    const assignment = await this.prisma.assistantGroupAssignment.update({
+      where: { id },
+      data: {
+        status: dto.status,
+        ends_at: dto.endsAt ? new Date(dto.endsAt) : dto.status === AssistantAssignmentStatus.INACTIVE ? new Date() : null,
+      },
+      include: {
+        assistant: { select: this.userSelect() },
+        group: true,
+      },
+    });
+
+    await this.audit.log({
+      userId: actorId,
+      action: 'ASSISTANT_GROUP_ASSIGNMENT_UPDATED',
+      entity: 'assistant_group_assignment',
+      entityId: id,
+      payload: { status: dto.status },
+    });
+
+    return assignment;
+  }
+
+  async assignStudents(dto: AssignAssistantStudentsDto, actorId?: string) {
+    await this.ensureAssistant(dto.assistantId);
+    await this.ensureGroup(dto.groupId);
+
+    const enrollments = await this.prisma.studentEnrollment.findMany({
+      where: {
+        group_id: dto.groupId,
+        status: 'ACTIVE',
+        student_id: { in: dto.studentIds },
+        student: { status: 'ACTIVE' },
+      },
+      select: { student_id: true },
+    });
+    const found = new Set(enrollments.map((enrollment) => enrollment.student_id));
+    const missing = dto.studentIds.filter((studentId) => !found.has(studentId));
+    if (missing.length > 0) {
+      throw new BadRequestException('Some students are not active in this group');
+    }
+
+    await this.assignGroup(
+      {
+        assistantId: dto.assistantId,
+        groupId: dto.groupId,
+        responsibility: dto.responsibility,
+        startsAt: dto.startsAt,
+        notes: dto.notes,
+      },
+      actorId,
+    );
+
+    const assignments = await this.prisma.$transaction(
+      dto.studentIds.map((studentId) =>
+        this.prisma.assistantStudentAssignment.upsert({
+          where: {
+            assistant_id_student_id_group_id_responsibility: {
+              assistant_id: dto.assistantId,
+              student_id: studentId,
+              group_id: dto.groupId,
+              responsibility: dto.responsibility,
+            },
+          },
+          create: {
+            assistant_id: dto.assistantId,
+            student_id: studentId,
+            group_id: dto.groupId,
+            responsibility: dto.responsibility,
+            assigned_by_id: actorId,
+            starts_at: dto.startsAt ? new Date(dto.startsAt) : new Date(),
+            notes: dto.notes?.trim() || null,
+          },
+          update: {
+            status: AssistantAssignmentStatus.ACTIVE,
+            assigned_by_id: actorId,
+            starts_at: dto.startsAt ? new Date(dto.startsAt) : undefined,
+            ends_at: null,
+            notes: dto.notes?.trim() || null,
+          },
+          include: {
+            student: true,
+            group: true,
+            assistant: { select: this.userSelect() },
+          },
+        }),
+      ),
+    );
+
+    await this.audit.log({
+      userId: actorId,
+      action: 'ASSISTANT_STUDENTS_ASSIGNED',
+      entity: 'assistant_student_assignment',
+      payload: {
+        assistantId: dto.assistantId,
+        groupId: dto.groupId,
+        responsibility: dto.responsibility,
+        studentsCount: dto.studentIds.length,
+      },
+    });
+
+    return assignments;
+  }
+
+  async listStudentAssignments(user: any, assistantId?: string, groupId?: string) {
+    const scopedAssistantId = this.isManager(user) ? assistantId : user?.id;
+    return this.prisma.assistantStudentAssignment.findMany({
+      where: {
+        assistant_id: scopedAssistantId,
+        group_id: groupId,
+      },
+      include: {
+        assistant: { select: this.userSelect() },
+        student: true,
+        group: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
+  async createSession(dto: CreateTeachingSessionDto, actorId?: string) {
+    const group = await this.ensureGroup(dto.groupId);
+    const assistantIds = [
+      dto.attendanceAssistantId,
+      dto.guardianContactAssistantId,
+      dto.academicAssistantId,
+    ].filter(Boolean) as string[];
+    for (const assistantId of assistantIds) {
+      await this.ensureAssistant(assistantId);
+    }
+
+    const session = await this.prisma.teachingSession.create({
+      data: {
+        group_id: group.id,
+        title: dto.title?.trim() || null,
+        session_date: new Date(dto.sessionDate),
+        starts_at: dto.startsAt ? new Date(dto.startsAt) : null,
+        ends_at: dto.endsAt ? new Date(dto.endsAt) : null,
+        created_by_id: actorId,
+        attendance_assistant_id: dto.attendanceAssistantId || null,
+        guardian_contact_assistant_id: dto.guardianContactAssistantId || null,
+        academic_assistant_id: dto.academicAssistantId || null,
+        notes: dto.notes?.trim() || null,
+      },
+    });
+
+    const enrollments = await this.prisma.studentEnrollment.findMany({
+      where: {
+        group_id: group.id,
+        status: 'ACTIVE',
+        student: { status: 'ACTIVE' },
+      },
+      select: { id: true, student_id: true },
+    });
+
+    if (enrollments.length > 0) {
+      await this.prisma.attendanceRecord.createMany({
+        data: enrollments.map((enrollment) => ({
+          session_id: session.id,
+          student_id: enrollment.student_id,
+          group_id: group.id,
+          enrollment_id: enrollment.id,
+          status: AttendanceStatus.ABSENT,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    await this.audit.log({
+      userId: actorId,
+      action: 'TEACHING_SESSION_CREATED',
+      entity: 'teaching_session',
+      entityId: session.id,
+      payload: { groupId: group.id, studentsCount: enrollments.length },
+    });
+
+    return this.getSession(session.id, { id: actorId, role: Role.ADMIN });
+  }
+
+  async listSessions(user: any, groupId?: string, date?: string) {
+    const groupIds = await this.assignedGroupIds(user);
+    if (groupIds && groupIds.length === 0) {
+      return [];
+    }
+
+    const where: any = {};
+    if (groupId) where.group_id = groupId;
+    if (groupIds) where.group_id = { in: groupId ? groupIds.filter((id) => id === groupId) : groupIds };
+    if (date) {
+      const start = new Date(date);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      where.session_date = { gte: start, lt: end };
+    }
+
+    return this.prisma.teachingSession.findMany({
+      where,
+      include: {
+        group: true,
+        attendance_assistant: { select: this.userSelect() },
+        guardian_contact_assistant: { select: this.userSelect() },
+        academic_assistant: { select: this.userSelect() },
+        _count: { select: { attendance_records: true, guardian_contact_logs: true, academic_follow_ups: true } },
+      },
+      orderBy: { session_date: 'desc' },
+      take: 100,
+    });
+  }
+
+  async getSession(id: string, user: any) {
+    const session = await this.prisma.teachingSession.findUnique({
+      where: { id },
+      include: {
+        group: true,
+        attendance_assistant: { select: this.userSelect() },
+        guardian_contact_assistant: { select: this.userSelect() },
+        academic_assistant: { select: this.userSelect() },
+        attendance_records: {
+          include: {
+            student: true,
+            recorded_by: { select: this.userSelect() },
+            contacts: {
+              include: { contacted_by: { select: this.userSelect() } },
+              orderBy: { created_at: 'desc' },
+            },
+          },
+          orderBy: { student: { full_name: 'asc' } },
+        },
+        guardian_contact_logs: {
+          include: {
+            student: true,
+            contacted_by: { select: this.userSelect() },
+          },
+          orderBy: { created_at: 'desc' },
+        },
+        academic_follow_ups: {
+          include: {
+            student: true,
+            assistant: { select: this.userSelect() },
+          },
+          orderBy: { entry_date: 'desc' },
+        },
+      },
+    });
+    if (!session) {
+      throw new NotFoundException('Teaching session not found');
+    }
+    await this.ensureAnyGroupAccess(user, session.group_id);
+    return session;
+  }
+
+  async updateSessionStatus(id: string, dto: UpdateTeachingSessionStatusDto, actorId?: string) {
+    const session = await this.prisma.teachingSession.update({
+      where: { id },
+      data: { status: dto.status },
+      include: { group: true },
+    });
+
+    await this.audit.log({
+      userId: actorId,
+      action: 'TEACHING_SESSION_STATUS_UPDATED',
+      entity: 'teaching_session',
+      entityId: id,
+      payload: { status: dto.status },
+    });
+
+    return session;
+  }
+
+  async upsertAttendance(sessionId: string, dto: UpsertAttendanceDto, user: any) {
+    const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
+    if (!session) {
+      throw new NotFoundException('Teaching session not found');
+    }
+    await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.ATTENDANCE);
+
+    const records = [];
+    for (const row of dto.records) {
+      const enrollment = await this.ensureStudentInGroup(row.studentId, session.group_id);
+      records.push(
+        this.prisma.attendanceRecord.upsert({
+          where: {
+            session_id_student_id: {
+              session_id: session.id,
+              student_id: row.studentId,
+            },
+          },
+          create: {
+            session_id: session.id,
+            student_id: row.studentId,
+            group_id: session.group_id,
+            enrollment_id: enrollment.id,
+            status: row.status,
+            recorded_by_id: user?.id,
+            minutes_late: row.minutesLate ?? null,
+            left_early_minutes: row.leftEarlyMinutes ?? null,
+            notes: row.notes?.trim() || null,
+          },
+          update: {
+            status: row.status,
+            recorded_by_id: user?.id,
+            recorded_at: new Date(),
+            minutes_late: row.minutesLate ?? null,
+            left_early_minutes: row.leftEarlyMinutes ?? null,
+            notes: row.notes?.trim() || null,
+          },
+          include: {
+            student: true,
+            recorded_by: { select: this.userSelect() },
+          },
+        }),
+      );
+    }
+
+    const saved = await this.prisma.$transaction(records);
+
+    await this.audit.log({
+      userId: user?.id,
+      action: 'ATTENDANCE_RECORDED',
+      entity: 'teaching_session',
+      entityId: session.id,
+      payload: { recordsCount: saved.length },
+    });
+
+    return saved;
+  }
+
+  async getAttendance(sessionId: string, user: any) {
+    const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException('Teaching session not found');
+    await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.ATTENDANCE);
+
+    return this.prisma.attendanceRecord.findMany({
+      where: { session_id: sessionId },
+      include: {
+        student: true,
+        recorded_by: { select: this.userSelect() },
+        contacts: { orderBy: { created_at: 'desc' } },
+      },
+      orderBy: { student: { full_name: 'asc' } },
+    });
+  }
+
+  async getAbsences(sessionId: string, user: any) {
+    const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException('Teaching session not found');
+    await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+
+    return this.prisma.attendanceRecord.findMany({
+      where: {
+        session_id: sessionId,
+        status: { in: [AttendanceStatus.ABSENT, AttendanceStatus.EXCUSED] },
+      },
+      include: {
+        student: true,
+        contacts: {
+          include: { contacted_by: { select: this.userSelect() } },
+          orderBy: { created_at: 'desc' },
+        },
+      },
+      orderBy: { student: { full_name: 'asc' } },
+    });
+  }
+
+  async createGuardianContact(dto: CreateGuardianContactDto, user: any) {
+    const session = await this.prisma.teachingSession.findUnique({ where: { id: dto.sessionId } });
+    if (!session) throw new NotFoundException('Teaching session not found');
+    await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+
+    const enrollment = await this.ensureStudentInGroup(dto.studentId, session.group_id);
+    let attendanceId = dto.attendanceId;
+    if (attendanceId) {
+      const attendance = await this.prisma.attendanceRecord.findUnique({ where: { id: attendanceId } });
+      if (!attendance || attendance.session_id !== session.id || attendance.student_id !== dto.studentId) {
+        throw new BadRequestException('Attendance record does not match this session and student');
+      }
+    } else {
+      const attendance = await this.prisma.attendanceRecord.upsert({
+        where: {
+          session_id_student_id: {
+            session_id: session.id,
+            student_id: dto.studentId,
+          },
+        },
+        create: {
+          session_id: session.id,
+          student_id: dto.studentId,
+          group_id: session.group_id,
+          enrollment_id: enrollment.id,
+          status: AttendanceStatus.ABSENT,
+        },
+        update: {},
+      });
+      attendanceId = attendance.id;
+    }
+
+    const contact = await this.prisma.guardianContactLog.create({
+      data: {
+        attendance_id: attendanceId,
+        session_id: session.id,
+        student_id: dto.studentId,
+        group_id: session.group_id,
+        guardian_phone: dto.guardianPhone?.trim() || enrollment.student.guardian_phone || null,
+        status: dto.status,
+        response: dto.response?.trim() || null,
+        contacted_by_id: user?.id,
+        contacted_at: dto.contactedAt ? new Date(dto.contactedAt) : new Date(),
+        follow_up_at: dto.followUpAt ? new Date(dto.followUpAt) : null,
+        notes: dto.notes?.trim() || null,
+      },
+      include: {
+        student: true,
+        contacted_by: { select: this.userSelect() },
+      },
+    });
+
+    await this.audit.log({
+      userId: user?.id,
+      action: 'GUARDIAN_CONTACT_RECORDED',
+      entity: 'guardian_contact_log',
+      entityId: contact.id,
+      payload: { sessionId: session.id, studentId: dto.studentId, status: dto.status },
+    });
+
+    return contact;
+  }
+
+  async createAcademicFollowUp(dto: CreateAcademicFollowUpDto, user: any) {
+    let groupId = dto.groupId;
+    let sessionId = dto.sessionId;
+    if (sessionId) {
+      const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
+      if (!session) throw new NotFoundException('Teaching session not found');
+      groupId = session.group_id;
+    }
+    if (!groupId) {
+      throw new BadRequestException('Group is required when no session is selected');
+    }
+
+    await this.ensureGroupAccess(user, groupId, AssistantResponsibility.ACADEMIC_FOLLOW_UP);
+    await this.ensureStudentInGroup(dto.studentId, groupId);
+
+    const entry = await this.prisma.academicFollowUpEntry.create({
+      data: {
+        session_id: sessionId || null,
+        student_id: dto.studentId,
+        group_id: groupId,
+        assistant_id: user?.id,
+        entry_date: new Date(dto.entryDate),
+        activity_type: dto.activityType,
+        score: dto.score ?? null,
+        max_score: dto.maxScore ?? null,
+        question_type: dto.questionType?.trim() || null,
+        error_type: dto.errorType?.trim() || null,
+        error_reason: dto.errorReason?.trim() || null,
+        correction: dto.correction?.trim() || null,
+        assistant_action: dto.assistantAction?.trim() || null,
+        result: dto.result,
+        notes: dto.notes?.trim() || null,
+      },
+      include: {
+        student: true,
+        group: true,
+        assistant: { select: this.userSelect() },
+      },
+    });
+
+    await this.audit.log({
+      userId: user?.id,
+      action: 'ACADEMIC_FOLLOW_UP_CREATED',
+      entity: 'academic_follow_up_entry',
+      entityId: entry.id,
+      payload: { studentId: dto.studentId, groupId },
+    });
+
+    return entry;
+  }
+}

@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { AdminModule } from './admin/admin.module';
 import { AccountingModule } from './accounting/accounting.module';
+import { TeachingModule } from './teaching/teaching.module';
 
 @Module({
   imports: [
@@ -19,7 +20,8 @@ import { AccountingModule } from './accounting/accounting.module';
     AuthModule, 
     UsersModule,
     AdminModule,
-    AccountingModule
+    AccountingModule,
+    TeachingModule
   ],
   controllers: [],
   providers: [

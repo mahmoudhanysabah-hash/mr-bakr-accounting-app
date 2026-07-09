@@ -15,7 +15,7 @@ import {
 import api from '@/lib/axios';
 import { Modal } from '@/components/ui/Modal';
 
-type AccountingRole = 'ADMIN' | 'FINANCE_MANAGER' | 'ACCOUNTANT';
+type AccountingRole = 'ADMIN' | 'FINANCE_MANAGER' | 'ACCOUNTANT' | 'ASSISTANT';
 type UserStatus = 'ACTIVE' | 'INACTIVE' | 'BANNED';
 
 type AdminUser = {
@@ -43,6 +43,7 @@ const roleOptions: Array<{ value: AccountingRole; label: string; tone: string }>
   { value: 'ADMIN', label: 'مدير النظام', tone: 'bg-purple-50 text-purple-800 border-purple-100' },
   { value: 'FINANCE_MANAGER', label: 'مدير مالي', tone: 'bg-blue-50 text-blue-800 border-blue-100' },
   { value: 'ACCOUNTANT', label: 'محاسب', tone: 'bg-emerald-50 text-emerald-800 border-emerald-100' },
+  { value: 'ASSISTANT', label: 'مساعد', tone: 'bg-amber-50 text-amber-800 border-amber-100' },
 ];
 
 const statusOptions: Array<{ value: UserStatus; label: string; tone: string }> = [
