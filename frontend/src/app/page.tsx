@@ -5,7 +5,11 @@ import { useRouter } from 'next/navigation';
 import { AlertCircle, Lock, Mail } from 'lucide-react';
 import api from '@/lib/axios';
 
-const allowedRoles = ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER'];
+const allowedRoles = ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER', 'ASSISTANT'];
+
+function homeForRole(role: string) {
+  return role === 'ASSISTANT' ? '/sessions' : '/dashboard';
+}
 
 function getErrorMessage(error: unknown) {
   const response = (error as { response?: { data?: { error?: string; message?: string | string[] } } }).response;
@@ -30,7 +34,7 @@ export default function LoginPage() {
       try {
         const user = JSON.parse(userStr);
         if (allowedRoles.includes(user.role)) {
-          router.push('/dashboard');
+          router.push(homeForRole(user.role));
           return;
         }
       } catch {
@@ -54,7 +58,7 @@ export default function LoginPage() {
       }
 
       localStorage.setItem('user', JSON.stringify(user));
-      router.push('/dashboard');
+      router.push(homeForRole(user.role));
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {

@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Sidebar from '@/components/layout/Sidebar';
 import api from '@/lib/axios';
 
-const allowedRoles = ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER'];
+const allowedRoles = ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER', 'ASSISTANT'];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [authorized, setAuthorized] = useState(false);

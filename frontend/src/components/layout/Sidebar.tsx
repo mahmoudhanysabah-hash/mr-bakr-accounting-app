@@ -7,6 +7,7 @@ import api from '@/lib/axios';
 import {
   BarChart3,
   BellRing,
+  CalendarCheck,
   ImageUp,
   LayoutDashboard,
   LogOut,
@@ -33,10 +34,14 @@ export default function Sidebar() {
     }
   }, []);
 
-  const links = [
+  const links =
+    userRole === 'ASSISTANT'
+      ? [{ name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck }]
+      : [
     { name: 'لوحة التحصيل', href: '/dashboard', icon: LayoutDashboard },
     { name: 'شؤون الطلاب', href: '/students', icon: UserRound },
     { name: 'المجموعات الدراسية', href: '/groups', icon: Users },
+    { name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck },
     { name: 'التحصيل والشهور', href: '/periods', icon: WalletCards },
     { name: 'المصروفات العامة', href: '/expenses', icon: ReceiptText },
     { name: 'متأخرات الدفع', href: '/alerts', icon: BellRing },
