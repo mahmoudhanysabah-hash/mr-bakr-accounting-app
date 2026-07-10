@@ -3,13 +3,17 @@
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '@/lib/axios';
 import {
+  BookOpenCheck,
   CalendarCheck,
   CheckCircle2,
+  ClipboardCheck,
   Clock3,
   MessageSquareText,
   PhoneCall,
   Plus,
   RefreshCw,
+  Save,
+  Search,
   ShieldCheck,
   UserCheck,
   UserRoundCheck,
@@ -21,6 +25,8 @@ type Role = 'ADMIN' | 'ACCOUNTANT' | 'FINANCE_MANAGER' | 'ASSISTANT';
 type Responsibility = 'ATTENDANCE' | 'GUARDIAN_CONTACT' | 'ACADEMIC_FOLLOW_UP' | 'FULL';
 type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'LATE' | 'LEFT_EARLY' | 'EXCUSED';
 type GuardianContactStatus = 'PENDING' | 'CONTACTED' | 'NO_ANSWER' | 'EXCUSED' | 'NEEDS_FOLLOW_UP' | 'WRONG_NUMBER';
+type AcademicActivityType = 'HOMEWORK' | 'CLASSWORK' | 'QUIZ' | 'EXAM' | 'OTHER';
+type AcademicImprovementStatus = 'IMPROVED' | 'NOT_IMPROVED' | 'NEEDS_MORE_WORK' | 'NOT_ASSESSED';
 
 type Group = {
   id: string;
@@ -45,6 +51,15 @@ type AssistantGroupAssignment = {
   assistant: Assistant;
 };
 
+type AssistantStudentAssignment = {
+  id: string;
+  responsibility: Responsibility;
+  status: string;
+  group: Group;
+  assistant: Assistant;
+  student: Student;
+};
+
 type Student = {
   id: string;
   code: string;
@@ -60,6 +75,24 @@ type GuardianContact = {
   response?: string | null;
   notes?: string | null;
   contacted_at?: string | null;
+};
+
+type AcademicFollowUp = {
+  id: string;
+  student_id: string;
+  entry_date: string;
+  activity_type: AcademicActivityType;
+  score?: number | null;
+  max_score?: number | null;
+  question_type?: string | null;
+  error_type?: string | null;
+  error_reason?: string | null;
+  correction?: string | null;
+  assistant_action?: string | null;
+  result?: AcademicImprovementStatus | null;
+  notes?: string | null;
+  student: Student;
+  assistant?: Assistant | null;
 };
 
 type AttendanceRecord = {
@@ -81,6 +114,7 @@ type TeachingSession = {
   group: Group;
   attendance_records?: AttendanceRecord[];
   guardian_contact_logs?: GuardianContact[];
+  academic_follow_ups?: AcademicFollowUp[];
   _count?: {
     attendance_records: number;
     guardian_contact_logs: number;
@@ -91,6 +125,20 @@ type TeachingSession = {
 type ContactDraft = {
   status: GuardianContactStatus;
   response: string;
+  notes: string;
+};
+
+type FollowUpDraft = {
+  studentId: string;
+  activityType: AcademicActivityType;
+  score: string;
+  maxScore: string;
+  questionType: string;
+  errorType: string;
+  errorReason: string;
+  correction: string;
+  assistantAction: string;
+  result: AcademicImprovementStatus;
   notes: string;
 };
 
@@ -120,6 +168,21 @@ const contactStatusOptions: Array<{ value: GuardianContactStatus; label: string 
   { value: 'PENDING', label: 'لم يتم التواصل' },
 ];
 
+const activityOptions: Array<{ value: AcademicActivityType; label: string }> = [
+  { value: 'HOMEWORK', label: 'واجب' },
+  { value: 'CLASSWORK', label: 'تطبيق داخل الحصة' },
+  { value: 'QUIZ', label: 'اختبار قصير' },
+  { value: 'EXAM', label: 'امتحان' },
+  { value: 'OTHER', label: 'متابعة أخرى' },
+];
+
+const improvementOptions: Array<{ value: AcademicImprovementStatus; label: string }> = [
+  { value: 'NOT_ASSESSED', label: 'لم يتم التقييم' },
+  { value: 'IMPROVED', label: 'تحسن' },
+  { value: 'NOT_IMPROVED', label: 'لم يتحسن' },
+  { value: 'NEEDS_MORE_WORK', label: 'يحتاج شغل أكثر' },
+];
+
 function unwrapData<T>(payload: T | { data: T }): T {
   return 'data' in Object(payload) ? (payload as { data: T }).data : (payload as T);
 }
@@ -134,6 +197,20 @@ function attendanceMeta(status: AttendanceStatus) {
 
 function contactStatusLabel(status?: GuardianContactStatus | null) {
   return contactStatusOptions.find((item) => item.value === status)?.label ?? 'لم يتم التواصل';
+}
+
+function activityLabel(activity?: AcademicActivityType | null) {
+  return activityOptions.find((item) => item.value === activity)?.label ?? 'متابعة';
+}
+
+function improvementLabel(result?: AcademicImprovementStatus | null) {
+  return improvementOptions.find((item) => item.value === result)?.label ?? 'لم يتم التقييم';
+}
+
+function optionalNumber(value: string) {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -164,8 +241,54 @@ export default function SessionsPage() {
   const [assignmentAssistantId, setAssignmentAssistantId] = useState('');
   const [assignmentGroupId, setAssignmentGroupId] = useState('');
   const [assignmentResponsibility, setAssignmentResponsibility] = useState<Responsibility>('ATTENDANCE');
+  const [groupStudents, setGroupStudents] = useState<Student[]>([]);
+  const [studentAssignments, setStudentAssignments] = useState<AssistantStudentAssignment[]>([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [studentAssignmentNotes, setStudentAssignmentNotes] = useState('');
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [studentSearch, setStudentSearch] = useState('');
+  const [followUpDraft, setFollowUpDraft] = useState<FollowUpDraft>({
+    studentId: '',
+    activityType: 'HOMEWORK',
+    score: '',
+    maxScore: '',
+    questionType: '',
+    errorType: '',
+    errorReason: '',
+    correction: '',
+    assistantAction: '',
+    result: 'NOT_ASSESSED',
+    notes: '',
+  });
 
   const isManager = userRole ? managerRoles.includes(userRole) : false;
+
+  const loadGroupStudents = useCallback(
+    async (groupId = assignmentGroupId, assistantId = assignmentAssistantId) => {
+      if (!managerRoles.includes((userRole || 'ACCOUNTANT') as Role) || !groupId) return;
+      setLoadingStudents(true);
+      setError('');
+      try {
+        const [studentsResponse, assignmentsResponse] = await Promise.all([
+          api.get('/accounting/students', { params: { status: 'ACTIVE', groupId } }),
+          api.get('/teaching/assistant-students', {
+            params: {
+              groupId,
+              assistantId: assistantId || undefined,
+            },
+          }),
+        ]);
+        setGroupStudents(unwrapData<Student[]>(studentsResponse.data));
+        setStudentAssignments(unwrapData<AssistantStudentAssignment[]>(assignmentsResponse.data));
+        setSelectedStudentIds([]);
+      } catch (err) {
+        setError(getErrorMessage(err, 'تعذر تحميل طلبة الجروب'));
+      } finally {
+        setLoadingStudents(false);
+      }
+    },
+    [assignmentAssistantId, assignmentGroupId, userRole],
+  );
 
   const loadSession = useCallback(async (id: string) => {
     const response = await api.get(`/teaching/sessions/${id}`);
@@ -244,6 +367,19 @@ export default function SessionsPage() {
     void loadSessions();
   }, [loadSessions]);
 
+  useEffect(() => {
+    if (isManager && assignmentGroupId) {
+      void loadGroupStudents();
+    }
+  }, [assignmentAssistantId, assignmentGroupId, isManager, loadGroupStudents]);
+
+  useEffect(() => {
+    const firstStudentId = selectedSession?.attendance_records?.[0]?.student_id || '';
+    if (firstStudentId) {
+      setFollowUpDraft((current) => (current.studentId ? current : { ...current, studentId: firstStudentId }));
+    }
+  }, [selectedSession?.id, selectedSession?.attendance_records]);
+
   const sessionStats = useMemo(() => {
     const records = selectedSession?.attendance_records || [];
     return {
@@ -259,6 +395,37 @@ export default function SessionsPage() {
     () => (selectedSession?.attendance_records || []).filter((record) => record.status === 'ABSENT' || record.status === 'EXCUSED'),
     [selectedSession],
   );
+
+  const sessionStudents = useMemo(() => {
+    const records = selectedSession?.attendance_records || [];
+    return records.map((record) => record.student);
+  }, [selectedSession]);
+
+  const assignedStudentIds = useMemo(() => {
+    return new Set(
+      studentAssignments
+        .filter(
+          (assignment) =>
+            assignment.status === 'ACTIVE' &&
+            assignment.responsibility === assignmentResponsibility &&
+            assignment.assistant.id === assignmentAssistantId,
+        )
+        .map((assignment) => assignment.student.id),
+    );
+  }, [assignmentAssistantId, assignmentResponsibility, studentAssignments]);
+
+  const filteredGroupStudents = useMemo(() => {
+    const query = studentSearch.trim().toLowerCase();
+    if (!query) return groupStudents;
+    return groupStudents.filter((student) => {
+      return (
+        student.full_name.toLowerCase().includes(query) ||
+        student.code.toLowerCase().includes(query) ||
+        (student.guardian_phone || '').includes(query) ||
+        (student.student_phone || '').includes(query)
+      );
+    });
+  }, [groupStudents, studentSearch]);
 
   const createSession = async (event: FormEvent) => {
     event.preventDefault();
@@ -301,6 +468,100 @@ export default function SessionsPage() {
       setMessage('تم ربط المساعد بالجروب');
     } catch (err) {
       setError(getErrorMessage(err, 'تعذر ربط المساعد بالجروب'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleStudentSelection = (studentId: string) => {
+    setSelectedStudentIds((current) =>
+      current.includes(studentId)
+        ? current.filter((id) => id !== studentId)
+        : [...current, studentId],
+    );
+  };
+
+  const assignSelectedStudents = async () => {
+    if (!assignmentAssistantId || !assignmentGroupId) return;
+    if (selectedStudentIds.length === 0) {
+      setError('اختار طالب واحد على الأقل قبل حفظ التوزيع');
+      setMessage('');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await api.post('/teaching/assistant-students/bulk', {
+        assistantId: assignmentAssistantId,
+        groupId: assignmentGroupId,
+        responsibility: assignmentResponsibility,
+        studentIds: selectedStudentIds,
+        notes: studentAssignmentNotes.trim() || undefined,
+      });
+      const assignmentsResponse = await api.get('/teaching/assistant-groups');
+      setAssignments(unwrapData<AssistantGroupAssignment[]>(assignmentsResponse.data));
+      await loadGroupStudents(assignmentGroupId, assignmentAssistantId);
+      setStudentAssignmentNotes('');
+      setMessage(`تم ربط ${selectedStudentIds.length.toLocaleString('ar-EG')} طالب بالمساعد`);
+    } catch (err) {
+      setError(getErrorMessage(err, 'تعذر ربط الطلبة بالمساعد'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateFollowUpDraft = (patch: Partial<FollowUpDraft>) => {
+    setFollowUpDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const saveAcademicFollowUp = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedSession || !followUpDraft.studentId) return;
+
+    const score = optionalNumber(followUpDraft.score);
+    const maxScore = optionalNumber(followUpDraft.maxScore);
+    if ((followUpDraft.score.trim() && score === undefined) || (followUpDraft.maxScore.trim() && maxScore === undefined)) {
+      setError('درجة الطالب أو الدرجة النهائية غير صحيحة');
+      setMessage('');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await api.post('/teaching/academic-follow-ups', {
+        sessionId: selectedSession.id,
+        studentId: followUpDraft.studentId,
+        entryDate: new Date().toISOString(),
+        activityType: followUpDraft.activityType,
+        score,
+        maxScore,
+        questionType: followUpDraft.questionType.trim() || undefined,
+        errorType: followUpDraft.errorType.trim() || undefined,
+        errorReason: followUpDraft.errorReason.trim() || undefined,
+        correction: followUpDraft.correction.trim() || undefined,
+        assistantAction: followUpDraft.assistantAction.trim() || undefined,
+        result: followUpDraft.result,
+        notes: followUpDraft.notes.trim() || undefined,
+      });
+      await loadSession(selectedSession.id);
+      setFollowUpDraft((current) => ({
+        ...current,
+        score: '',
+        maxScore: '',
+        questionType: '',
+        errorType: '',
+        errorReason: '',
+        correction: '',
+        assistantAction: '',
+        result: 'NOT_ASSESSED',
+        notes: '',
+      }));
+      setMessage('تم حفظ المتابعة الدراسية للطالب');
+    } catch (err) {
+      setError(getErrorMessage(err, 'تعذر حفظ المتابعة الدراسية'));
     } finally {
       setSaving(false);
     }
@@ -557,6 +818,115 @@ export default function SessionsPage() {
             </section>
           </div>
 
+          {isManager && (
+            <section className="space-y-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-lg font-black text-slate-900">
+                    <UserCheck className="h-5 w-5 text-emerald-600" />
+                    توزيع الطلبة على المساعد
+                  </h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">
+                    {groupStudents.length.toLocaleString('ar-EG')} طالب في الجروب المحدد
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStudentIds(filteredGroupStudents.map((student) => student.id))}
+                    disabled={loadingStudents || filteredGroupStudents.length === 0}
+                    className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                  >
+                    تحديد الظاهر
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStudentIds([])}
+                    disabled={selectedStudentIds.length === 0}
+                    className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-black text-slate-600 transition hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    إلغاء التحديد
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-[1fr_1.4fr]">
+                <label className="space-y-2 text-sm font-bold text-slate-700">
+                  <span>بحث في الطلبة</span>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
+                    <input
+                      value={studentSearch}
+                      onChange={(event) => setStudentSearch(event.target.value)}
+                      placeholder="اسم الطالب أو الكود أو رقم الهاتف"
+                      className="w-full rounded-xl border border-slate-200 px-10 py-3 text-sm font-semibold outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </label>
+                <label className="space-y-2 text-sm font-bold text-slate-700">
+                  <span>ملاحظات التوزيع</span>
+                  <input
+                    value={studentAssignmentNotes}
+                    onChange={(event) => setStudentAssignmentNotes(event.target.value)}
+                    placeholder="مثال: يتابع الواجب فقط أو يتابع الغياب لهذا الشهر"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-500"
+                  />
+                </label>
+              </div>
+
+              <div className="max-h-80 overflow-y-auto rounded-xl border border-slate-100">
+                {loadingStudents ? (
+                  <div className="p-8 text-center text-sm font-bold text-slate-400">جاري تحميل طلبة الجروب...</div>
+                ) : filteredGroupStudents.length === 0 ? (
+                  <div className="p-8 text-center text-sm font-bold text-slate-400">لا يوجد طلبة مطابقون للاختيار الحالي.</div>
+                ) : (
+                  <div className="grid gap-2 p-3 md:grid-cols-2 xl:grid-cols-3">
+                    {filteredGroupStudents.map((student) => {
+                      const selected = selectedStudentIds.includes(student.id);
+                      const alreadyAssigned = assignedStudentIds.has(student.id);
+                      return (
+                        <button
+                          key={student.id}
+                          type="button"
+                          onClick={() => toggleStudentSelection(student.id)}
+                          className={`rounded-xl border p-3 text-right transition ${
+                            selected ? 'border-emerald-200 bg-emerald-50' : 'border-slate-100 bg-white hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              readOnly
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-black text-slate-900">{student.full_name}</div>
+                              <div className="mt-1 text-xs font-semibold text-slate-500">{student.code}</div>
+                              <div className="mt-2 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-black text-slate-600">
+                                {alreadyAssigned ? 'مسجل للمساعد' : 'غير مسجل'}
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void assignSelectedStudents()}
+                disabled={saving || !assignmentAssistantId || !assignmentGroupId || selectedStudentIds.length === 0}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-700 disabled:opacity-60"
+              >
+                <ClipboardCheck className="h-4 w-4" />
+                حفظ توزيع الطلبة المحددين
+              </button>
+            </section>
+          )}
+
           {isManager && assignments.length > 0 && (
             <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
               <h2 className="mb-4 text-lg font-black text-slate-900">توزيعات المساعدين الحالية</h2>
@@ -645,6 +1015,176 @@ export default function SessionsPage() {
                     })}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="space-y-4 rounded-xl border border-blue-100 bg-blue-50/30 p-4">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <h3 className="flex items-center gap-2 text-lg font-black text-slate-900">
+                    <BookOpenCheck className="h-5 w-5 text-blue-600" />
+                    المتابعة الدراسية والتصحيح
+                  </h3>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-blue-700">
+                    {(selectedSession.academic_follow_ups || []).length.toLocaleString('ar-EG')} متابعة
+                  </span>
+                </div>
+
+                {sessionStudents.length === 0 ? (
+                  <div className="rounded-xl border border-slate-100 bg-white p-4 text-sm font-bold text-slate-400">
+                    لا يوجد طلبة داخل هذه الحصة.
+                  </div>
+                ) : (
+                  <form onSubmit={saveAcademicFollowUp} className="space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <label className="space-y-2 text-sm font-bold text-slate-700">
+                        <span>الطالب</span>
+                        <select
+                          value={followUpDraft.studentId}
+                          onChange={(event) => updateFollowUpDraft({ studentId: event.target.value })}
+                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                        >
+                          {sessionStudents.map((student) => (
+                            <option key={student.id} value={student.id}>
+                              {student.full_name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="space-y-2 text-sm font-bold text-slate-700">
+                        <span>نوع المتابعة</span>
+                        <select
+                          value={followUpDraft.activityType}
+                          onChange={(event) => updateFollowUpDraft({ activityType: event.target.value as AcademicActivityType })}
+                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                        >
+                          {activityOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="space-y-2 text-sm font-bold text-slate-700">
+                        <span>درجة الطالب</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={followUpDraft.score}
+                          onChange={(event) => updateFollowUpDraft({ score: event.target.value })}
+                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                        />
+                      </label>
+                      <label className="space-y-2 text-sm font-bold text-slate-700">
+                        <span>الدرجة النهائية</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={followUpDraft.maxScore}
+                          onChange={(event) => updateFollowUpDraft({ maxScore: event.target.value })}
+                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <input
+                        value={followUpDraft.questionType}
+                        onChange={(event) => updateFollowUpDraft({ questionType: event.target.value })}
+                        placeholder="نوع السؤال"
+                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                      />
+                      <input
+                        value={followUpDraft.errorType}
+                        onChange={(event) => updateFollowUpDraft({ errorType: event.target.value })}
+                        placeholder="نوع الغلط"
+                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                      />
+                      <select
+                        value={followUpDraft.result}
+                        onChange={(event) => updateFollowUpDraft({ result: event.target.value as AcademicImprovementStatus })}
+                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                      >
+                        {improvementOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-3">
+                      <textarea
+                        value={followUpDraft.errorReason}
+                        onChange={(event) => updateFollowUpDraft({ errorReason: event.target.value })}
+                        placeholder="سبب الغلط"
+                        rows={3}
+                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                      />
+                      <textarea
+                        value={followUpDraft.correction}
+                        onChange={(event) => updateFollowUpDraft({ correction: event.target.value })}
+                        placeholder="التصحيح المطلوب"
+                        rows={3}
+                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                      />
+                      <textarea
+                        value={followUpDraft.assistantAction}
+                        onChange={(event) => updateFollowUpDraft({ assistantAction: event.target.value })}
+                        placeholder="إجراء المساعد"
+                        rows={3}
+                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <textarea
+                      value={followUpDraft.notes}
+                      onChange={(event) => updateFollowUpDraft({ notes: event.target.value })}
+                      placeholder="ملاحظات إضافية"
+                      rows={2}
+                      className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
+                    />
+
+                    <button
+                      type="submit"
+                      disabled={saving || !followUpDraft.studentId}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      <Save className="h-4 w-4" />
+                      حفظ المتابعة الدراسية
+                    </button>
+                  </form>
+                )}
+
+                {(selectedSession.academic_follow_ups || []).length > 0 && (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(selectedSession.academic_follow_ups || []).slice(0, 6).map((entry) => (
+                      <div key={entry.id} className="rounded-xl border border-blue-100 bg-white p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-black text-slate-900">{entry.student.full_name}</div>
+                            <div className="mt-1 text-xs font-bold text-slate-500">
+                              {activityLabel(entry.activity_type)}، {new Date(entry.entry_date).toLocaleDateString('ar-EG')}
+                            </div>
+                          </div>
+                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
+                            {improvementLabel(entry.result)}
+                          </span>
+                        </div>
+                        {(entry.score != null || entry.max_score != null) && (
+                          <div className="mt-3 text-sm font-black text-slate-700">
+                            الدرجة: {entry.score ?? '-'} / {entry.max_score ?? '-'}
+                          </div>
+                        )}
+                        {(entry.error_type || entry.correction || entry.assistant_action) && (
+                          <div className="mt-3 space-y-1 text-xs font-semibold text-slate-600">
+                            {entry.error_type && <div>نوع الغلط: {entry.error_type}</div>}
+                            {entry.correction && <div>التصحيح: {entry.correction}</div>}
+                            {entry.assistant_action && <div>إجراء المساعد: {entry.assistant_action}</div>}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3">
