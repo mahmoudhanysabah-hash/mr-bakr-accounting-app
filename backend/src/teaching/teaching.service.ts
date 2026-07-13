@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AcademicImprovementStatus,
   AssistantAssignmentStatus,
   AssistantResponsibility,
   AttendanceStatus,
@@ -100,6 +101,30 @@ export class TeachingService {
     }
   }
 
+  private async ensureStudentAccess(
+    user: any,
+    studentId: string,
+    groupId: string,
+    responsibility: AssistantResponsibility,
+  ) {
+    if (this.isManager(user)) {
+      return;
+    }
+    await this.ensureGroupAccess(user, groupId, responsibility);
+    const count = await this.prisma.assistantStudentAssignment.count({
+      where: {
+        assistant_id: user.id,
+        student_id: studentId,
+        group_id: groupId,
+        status: AssistantAssignmentStatus.ACTIVE,
+        responsibility: { in: this.responsibilityFilter(responsibility) },
+      },
+    });
+    if (count === 0) {
+      throw new ForbiddenException('Assistant is not assigned to this student');
+    }
+  }
+
   private async ensureAnyGroupAccess(user: any, groupId: string) {
     if (this.isManager(user)) {
       return;
@@ -135,6 +160,30 @@ export class TeachingService {
       distinct: ['group_id'],
     });
     return assignments.map((assignment) => assignment.group_id);
+  }
+
+  private async assignedStudentIds(
+    user: any,
+    groupId?: string,
+    responsibility?: AssistantResponsibility,
+  ) {
+    if (this.isManager(user)) {
+      return undefined;
+    }
+    if (user?.role !== Role.ASSISTANT) {
+      return [];
+    }
+    const assignments = await this.prisma.assistantStudentAssignment.findMany({
+      where: {
+        assistant_id: user.id,
+        group_id: groupId,
+        status: AssistantAssignmentStatus.ACTIVE,
+        responsibility: responsibility ? { in: this.responsibilityFilter(responsibility) } : undefined,
+      },
+      select: { student_id: true },
+      distinct: ['student_id'],
+    });
+    return assignments.map((assignment) => assignment.student_id);
   }
 
   private userSelect() {
@@ -424,6 +473,15 @@ export class TeachingService {
   }
 
   async getSession(id: string, user: any) {
+    const baseSession = await this.prisma.teachingSession.findUnique({
+      where: { id },
+      select: { group_id: true },
+    });
+    if (!baseSession) {
+      throw new NotFoundException('Teaching session not found');
+    }
+    await this.ensureAnyGroupAccess(user, baseSession.group_id);
+    const allowedStudentIds = await this.assignedStudentIds(user, baseSession.group_id);
     const session = await this.prisma.teachingSession.findUnique({
       where: { id },
       include: {
@@ -432,6 +490,7 @@ export class TeachingService {
         guardian_contact_assistant: { select: this.userSelect() },
         academic_assistant: { select: this.userSelect() },
         attendance_records: {
+          where: allowedStudentIds ? { student_id: { in: allowedStudentIds } } : undefined,
           include: {
             student: true,
             recorded_by: { select: this.userSelect() },
@@ -443,6 +502,7 @@ export class TeachingService {
           orderBy: { student: { full_name: 'asc' } },
         },
         guardian_contact_logs: {
+          where: allowedStudentIds ? { student_id: { in: allowedStudentIds } } : undefined,
           include: {
             student: true,
             contacted_by: { select: this.userSelect() },
@@ -450,6 +510,7 @@ export class TeachingService {
           orderBy: { created_at: 'desc' },
         },
         academic_follow_ups: {
+          where: allowedStudentIds ? { student_id: { in: allowedStudentIds } } : undefined,
           include: {
             student: true,
             assistant: { select: this.userSelect() },
@@ -461,7 +522,6 @@ export class TeachingService {
     if (!session) {
       throw new NotFoundException('Teaching session not found');
     }
-    await this.ensureAnyGroupAccess(user, session.group_id);
     return session;
   }
 
@@ -493,6 +553,7 @@ export class TeachingService {
     const records = [];
     for (const row of dto.records) {
       const enrollment = await this.ensureStudentInGroup(row.studentId, session.group_id);
+      await this.ensureStudentAccess(user, row.studentId, session.group_id, AssistantResponsibility.ATTENDANCE);
       records.push(
         this.prisma.attendanceRecord.upsert({
           where: {
@@ -545,9 +606,13 @@ export class TeachingService {
     const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
     if (!session) throw new NotFoundException('Teaching session not found');
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.ATTENDANCE);
+    const allowedStudentIds = await this.assignedStudentIds(user, session.group_id, AssistantResponsibility.ATTENDANCE);
 
     return this.prisma.attendanceRecord.findMany({
-      where: { session_id: sessionId },
+      where: {
+        session_id: sessionId,
+        student_id: allowedStudentIds ? { in: allowedStudentIds } : undefined,
+      },
       include: {
         student: true,
         recorded_by: { select: this.userSelect() },
@@ -561,11 +626,13 @@ export class TeachingService {
     const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
     if (!session) throw new NotFoundException('Teaching session not found');
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+    const allowedStudentIds = await this.assignedStudentIds(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
 
     return this.prisma.attendanceRecord.findMany({
       where: {
         session_id: sessionId,
         status: { in: [AttendanceStatus.ABSENT, AttendanceStatus.EXCUSED] },
+        student_id: allowedStudentIds ? { in: allowedStudentIds } : undefined,
       },
       include: {
         student: true,
@@ -582,6 +649,7 @@ export class TeachingService {
     const session = await this.prisma.teachingSession.findUnique({ where: { id: dto.sessionId } });
     if (!session) throw new NotFoundException('Teaching session not found');
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+    await this.ensureStudentAccess(user, dto.studentId, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
 
     const enrollment = await this.ensureStudentInGroup(dto.studentId, session.group_id);
     let attendanceId = dto.attendanceId;
@@ -641,6 +709,322 @@ export class TeachingService {
     return contact;
   }
 
+  private reportDateRange(startDate?: string, endDate?: string) {
+    const end = endDate ? new Date(endDate) : new Date();
+    end.setHours(23, 59, 59, 999);
+    const start = startDate ? new Date(startDate) : new Date(end);
+    if (!startDate) {
+      start.setDate(start.getDate() - 30);
+    }
+    start.setHours(0, 0, 0, 0);
+    return { start, end };
+  }
+
+  private emptyOperationsReport(start: Date, end: Date, groupId?: string, assistantId?: string) {
+    return {
+      filters: { startDate: start.toISOString(), endDate: end.toISOString(), groupId: groupId || null, assistantId: assistantId || null },
+      totals: {
+        sessions: 0,
+        attendanceRecords: 0,
+        present: 0,
+        absent: 0,
+        late: 0,
+        leftEarly: 0,
+        excused: 0,
+        uncontactedAbsences: 0,
+        guardianContacts: 0,
+        academicFollowUps: 0,
+        needsWork: 0,
+      },
+      groups: [],
+      students: [],
+      recentGuardianContacts: [],
+      recentAcademicFollowUps: [],
+      assistants: [],
+    };
+  }
+
+  async getOperationsReport(user: any, startDate?: string, endDate?: string, groupId?: string, assistantId?: string) {
+    const { start, end } = this.reportDateRange(startDate, endDate);
+    const scopedGroupIds = await this.assignedGroupIds(user);
+    if (scopedGroupIds && scopedGroupIds.length === 0) {
+      return this.emptyOperationsReport(start, end, groupId, assistantId);
+    }
+
+    let groupFilter: string | { in: string[] } | undefined;
+    if (groupId && scopedGroupIds && !scopedGroupIds.includes(groupId)) {
+      return this.emptyOperationsReport(start, end, groupId, assistantId);
+    }
+    if (groupId) {
+      groupFilter = groupId;
+    } else if (scopedGroupIds) {
+      groupFilter = { in: scopedGroupIds };
+    }
+
+    const sessionWhere: any = {
+      session_date: { gte: start, lte: end },
+      group_id: groupFilter,
+    };
+
+    const accessRows = this.isManager(user)
+      ? undefined
+      : await this.prisma.assistantStudentAssignment.findMany({
+          where: {
+            assistant_id: user?.id,
+            status: AssistantAssignmentStatus.ACTIVE,
+            group_id: groupFilter,
+          },
+          select: { group_id: true, student_id: true },
+          distinct: ['group_id', 'student_id'],
+        });
+    if (accessRows && accessRows.length === 0) {
+      return this.emptyOperationsReport(start, end, groupId, assistantId);
+    }
+
+    const studentAccessWhere = accessRows
+      ? { OR: accessRows.map((row) => ({ group_id: row.group_id, student_id: row.student_id })) }
+      : {};
+    const assistantFilter = this.isManager(user) ? assistantId || undefined : undefined;
+
+    const [sessions, attendanceRecords, guardianContacts, academicFollowUps] = await Promise.all([
+      this.prisma.teachingSession.findMany({
+        where: sessionWhere,
+        include: { group: true },
+        orderBy: { session_date: 'desc' },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: {
+          session: sessionWhere,
+          ...studentAccessWhere,
+          recorded_by_id: assistantFilter,
+        },
+        include: {
+          student: true,
+          group: true,
+          session: true,
+          contacts: { orderBy: { created_at: 'desc' } },
+          recorded_by: { select: this.userSelect() },
+        },
+        orderBy: { recorded_at: 'desc' },
+        take: 5000,
+      }),
+      this.prisma.guardianContactLog.findMany({
+        where: {
+          session: sessionWhere,
+          ...studentAccessWhere,
+          contacted_by_id: assistantFilter,
+        },
+        include: {
+          student: true,
+          group: true,
+          session: true,
+          contacted_by: { select: this.userSelect() },
+        },
+        orderBy: [{ contacted_at: 'desc' }, { created_at: 'desc' }],
+        take: 1000,
+      }),
+      this.prisma.academicFollowUpEntry.findMany({
+        where: {
+          entry_date: { gte: start, lte: end },
+          group_id: groupFilter,
+          ...studentAccessWhere,
+          assistant_id: assistantFilter,
+        },
+        include: {
+          student: true,
+          group: true,
+          assistant: { select: this.userSelect() },
+        },
+        orderBy: { entry_date: 'desc' },
+        take: 1000,
+      }),
+    ]);
+
+    const totals = {
+      sessions: sessions.length,
+      attendanceRecords: attendanceRecords.length,
+      present: 0,
+      absent: 0,
+      late: 0,
+      leftEarly: 0,
+      excused: 0,
+      uncontactedAbsences: 0,
+      guardianContacts: guardianContacts.length,
+      academicFollowUps: academicFollowUps.length,
+      needsWork: 0,
+    };
+
+    const groups = new Map<string, any>();
+    const students = new Map<string, any>();
+    const assistants = new Map<string, any>();
+
+    const ensureGroup = (group: any) => {
+      const current = groups.get(group.id) ?? {
+        groupId: group.id,
+        groupName: group.name,
+        sessions: 0,
+        attendanceRecords: 0,
+        present: 0,
+        absent: 0,
+        late: 0,
+        leftEarly: 0,
+        excused: 0,
+        uncontactedAbsences: 0,
+        guardianContacts: 0,
+        academicFollowUps: 0,
+        needsWork: 0,
+        students: new Set<string>(),
+      };
+      groups.set(group.id, current);
+      return current;
+    };
+
+    const ensureStudent = (student: any, group: any) => {
+      const current = students.get(student.id) ?? {
+        studentId: student.id,
+        studentName: student.full_name,
+        studentCode: student.code,
+        guardianPhone: student.guardian_phone,
+        groupName: group.name,
+        absences: 0,
+        late: 0,
+        uncontactedAbsences: 0,
+        guardianContacts: 0,
+        academicFollowUps: 0,
+        needsWork: 0,
+        lastAbsenceDate: null,
+        lastContactStatus: null,
+        lastFollowUpResult: null,
+      };
+      students.set(student.id, current);
+      return current;
+    };
+
+    const ensureAssistant = (assistant: any) => {
+      if (!assistant?.id) return null;
+      const current = assistants.get(assistant.id) ?? {
+        assistantId: assistant.id,
+        assistantName: assistant.name,
+        attendanceRecords: 0,
+        guardianContacts: 0,
+        academicFollowUps: 0,
+      };
+      assistants.set(assistant.id, current);
+      return current;
+    };
+
+    sessions.forEach((session) => {
+      const group = ensureGroup(session.group);
+      group.sessions += 1;
+    });
+
+    attendanceRecords.forEach((record) => {
+      const group = ensureGroup(record.group);
+      const student = ensureStudent(record.student, record.group);
+      const assistant = ensureAssistant(record.recorded_by);
+      group.attendanceRecords += 1;
+      group.students.add(record.student_id);
+      if (assistant) assistant.attendanceRecords += 1;
+
+      if (record.status === AttendanceStatus.PRESENT) {
+        totals.present += 1;
+        group.present += 1;
+      }
+      if (record.status === AttendanceStatus.ABSENT) {
+        totals.absent += 1;
+        group.absent += 1;
+        student.absences += 1;
+        student.lastAbsenceDate = record.session.session_date;
+      }
+      if (record.status === AttendanceStatus.LATE) {
+        totals.late += 1;
+        group.late += 1;
+        student.late += 1;
+      }
+      if (record.status === AttendanceStatus.LEFT_EARLY) {
+        totals.leftEarly += 1;
+        group.leftEarly += 1;
+      }
+      if (record.status === AttendanceStatus.EXCUSED) {
+        totals.excused += 1;
+        group.excused += 1;
+        student.absences += 1;
+        student.lastAbsenceDate = record.session.session_date;
+      }
+      if ((record.status === AttendanceStatus.ABSENT || record.status === AttendanceStatus.EXCUSED) && record.contacts.length === 0) {
+        totals.uncontactedAbsences += 1;
+        group.uncontactedAbsences += 1;
+        student.uncontactedAbsences += 1;
+      }
+    });
+
+    guardianContacts.forEach((contact) => {
+      const group = ensureGroup(contact.group);
+      const student = ensureStudent(contact.student, contact.group);
+      const assistant = ensureAssistant(contact.contacted_by);
+      group.guardianContacts += 1;
+      student.guardianContacts += 1;
+      student.lastContactStatus = contact.status;
+      if (assistant) assistant.guardianContacts += 1;
+    });
+
+    academicFollowUps.forEach((entry) => {
+      const group = ensureGroup(entry.group);
+      const student = ensureStudent(entry.student, entry.group);
+      const assistant = ensureAssistant(entry.assistant);
+      group.academicFollowUps += 1;
+      student.academicFollowUps += 1;
+      student.lastFollowUpResult = entry.result;
+      if (assistant) assistant.academicFollowUps += 1;
+      if (
+        entry.result === AcademicImprovementStatus.NEEDS_MORE_WORK ||
+        entry.result === AcademicImprovementStatus.NOT_IMPROVED
+      ) {
+        totals.needsWork += 1;
+        group.needsWork += 1;
+        student.needsWork += 1;
+      }
+    });
+
+    return {
+      filters: { startDate: start.toISOString(), endDate: end.toISOString(), groupId: groupId || null, assistantId: assistantId || null },
+      totals,
+      groups: [...groups.values()]
+        .map((group) => ({ ...group, students: undefined, studentsCount: group.students.size }))
+        .sort((a, b) => b.uncontactedAbsences - a.uncontactedAbsences || b.needsWork - a.needsWork),
+      students: [...students.values()]
+        .sort((a, b) => b.uncontactedAbsences - a.uncontactedAbsences || b.absences - a.absences || b.needsWork - a.needsWork)
+        .slice(0, 50),
+      recentGuardianContacts: guardianContacts.slice(0, 30).map((contact) => ({
+        id: contact.id,
+        studentName: contact.student.full_name,
+        groupName: contact.group.name,
+        status: contact.status,
+        response: contact.response,
+        contactedAt: contact.contacted_at || contact.created_at,
+        assistantName: contact.contacted_by?.name || null,
+      })),
+      recentAcademicFollowUps: academicFollowUps.slice(0, 30).map((entry) => ({
+        id: entry.id,
+        studentName: entry.student.full_name,
+        groupName: entry.group.name,
+        activityType: entry.activity_type,
+        result: entry.result,
+        score: entry.score == null ? null : Number(entry.score),
+        maxScore: entry.max_score == null ? null : Number(entry.max_score),
+        entryDate: entry.entry_date,
+        assistantName: entry.assistant?.name || null,
+      })),
+      assistants: [...assistants.values()].sort(
+        (a, b) =>
+          b.attendanceRecords +
+          b.guardianContacts +
+          b.academicFollowUps -
+          (a.attendanceRecords + a.guardianContacts + a.academicFollowUps),
+      ),
+    };
+  }
+
   async createAcademicFollowUp(dto: CreateAcademicFollowUpDto, user: any) {
     let groupId = dto.groupId;
     let sessionId = dto.sessionId;
@@ -655,6 +1039,7 @@ export class TeachingService {
 
     await this.ensureGroupAccess(user, groupId, AssistantResponsibility.ACADEMIC_FOLLOW_UP);
     await this.ensureStudentInGroup(dto.studentId, groupId);
+    await this.ensureStudentAccess(user, dto.studentId, groupId, AssistantResponsibility.ACADEMIC_FOLLOW_UP);
 
     const entry = await this.prisma.academicFollowUpEntry.create({
       data: {

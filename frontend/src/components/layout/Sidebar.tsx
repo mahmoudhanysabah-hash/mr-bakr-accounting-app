@@ -45,7 +45,7 @@ export default function Sidebar() {
     { name: 'التحصيل والشهور', href: '/periods', icon: WalletCards },
     { name: 'المصروفات العامة', href: '/expenses', icon: ReceiptText },
     { name: 'متأخرات الدفع', href: '/alerts', icon: BellRing },
-    { name: 'التقارير المالية', href: '/reports', icon: BarChart3 },
+    { name: 'التقارير', href: '/reports', icon: BarChart3 },
     { name: 'رفع صورة حسابات', href: '/import', icon: ImageUp },
     ...(userRole === 'ADMIN'
       ? [{ name: 'مستخدمي النظام', href: '/admin/users', icon: ShieldCheck }]

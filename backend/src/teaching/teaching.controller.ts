@@ -68,6 +68,17 @@ export class TeachingController {
     return this.teaching.listStudentAssignments(user, assistantId, groupId);
   }
 
+  @Get('reports/operations')
+  getOperationsReport(
+    @CurrentUser() user: any,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('groupId') groupId?: string,
+    @Query('assistantId') assistantId?: string,
+  ) {
+    return this.teaching.getOperationsReport(user, startDate, endDate, groupId, assistantId);
+  }
+
   @Post('sessions')
   @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
   createSession(@Body() dto: CreateTeachingSessionDto, @CurrentUser() user: any) {
