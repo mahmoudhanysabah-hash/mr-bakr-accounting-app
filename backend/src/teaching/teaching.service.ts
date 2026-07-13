@@ -125,6 +125,22 @@ export class TeachingService {
     }
   }
 
+  private async hasGroupResponsibility(
+    assistantId: string,
+    groupId: string,
+    responsibility: AssistantResponsibility,
+  ) {
+    const count = await this.prisma.assistantGroupAssignment.count({
+      where: {
+        assistant_id: assistantId,
+        group_id: groupId,
+        status: AssistantAssignmentStatus.ACTIVE,
+        responsibility: { in: this.responsibilityFilter(responsibility) },
+      },
+    });
+    return count > 0;
+  }
+
   private async ensureAnyGroupAccess(user: any, groupId: string) {
     if (this.isManager(user)) {
       return;
@@ -382,15 +398,33 @@ export class TeachingService {
     });
   }
 
-  async createSession(dto: CreateTeachingSessionDto, actorId?: string) {
+  async createSession(dto: CreateTeachingSessionDto, user: any) {
     const group = await this.ensureGroup(dto.groupId);
-    const assistantIds = [
-      dto.attendanceAssistantId,
-      dto.guardianContactAssistantId,
-      dto.academicAssistantId,
-    ].filter(Boolean) as string[];
-    for (const assistantId of assistantIds) {
-      await this.ensureAssistant(assistantId);
+    await this.ensureGroupAccess(user, group.id, AssistantResponsibility.ATTENDANCE);
+
+    const actorId = user?.id;
+    const createdByAssistant = user?.role === Role.ASSISTANT;
+    let attendanceAssistantId = dto.attendanceAssistantId || null;
+    let guardianContactAssistantId = dto.guardianContactAssistantId || null;
+    let academicAssistantId = dto.academicAssistantId || null;
+
+    if (createdByAssistant) {
+      attendanceAssistantId = user.id;
+      guardianContactAssistantId = (await this.hasGroupResponsibility(user.id, group.id, AssistantResponsibility.GUARDIAN_CONTACT))
+        ? user.id
+        : null;
+      academicAssistantId = (await this.hasGroupResponsibility(user.id, group.id, AssistantResponsibility.ACADEMIC_FOLLOW_UP))
+        ? user.id
+        : null;
+    } else {
+      const assistantIds = [
+        attendanceAssistantId,
+        guardianContactAssistantId,
+        academicAssistantId,
+      ].filter(Boolean) as string[];
+      for (const assistantId of assistantIds) {
+        await this.ensureAssistant(assistantId);
+      }
     }
 
     const session = await this.prisma.teachingSession.create({
@@ -401,9 +435,9 @@ export class TeachingService {
         starts_at: dto.startsAt ? new Date(dto.startsAt) : null,
         ends_at: dto.endsAt ? new Date(dto.endsAt) : null,
         created_by_id: actorId,
-        attendance_assistant_id: dto.attendanceAssistantId || null,
-        guardian_contact_assistant_id: dto.guardianContactAssistantId || null,
-        academic_assistant_id: dto.academicAssistantId || null,
+        attendance_assistant_id: attendanceAssistantId,
+        guardian_contact_assistant_id: guardianContactAssistantId,
+        academic_assistant_id: academicAssistantId,
         notes: dto.notes?.trim() || null,
       },
     });
@@ -438,7 +472,7 @@ export class TeachingService {
       payload: { groupId: group.id, studentsCount: enrollments.length },
     });
 
-    return this.getSession(session.id, { id: actorId, role: Role.ADMIN });
+    return this.getSession(session.id, user);
   }
 
   async listSessions(user: any, groupId?: string, date?: string) {

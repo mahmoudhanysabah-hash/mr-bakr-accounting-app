@@ -80,9 +80,8 @@ export class TeachingController {
   }
 
   @Post('sessions')
-  @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
   createSession(@Body() dto: CreateTeachingSessionDto, @CurrentUser() user: any) {
-    return this.teaching.createSession(dto, user?.id);
+    return this.teaching.createSession(dto, user);
   }
 
   @Get('sessions')

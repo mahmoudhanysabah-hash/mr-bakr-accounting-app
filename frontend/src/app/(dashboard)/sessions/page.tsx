@@ -262,6 +262,15 @@ export default function SessionsPage() {
   });
 
   const isManager = userRole ? managerRoles.includes(userRole) : false;
+  const canCreateSession = useMemo(() => {
+    if (isManager) return true;
+    return assignments.some(
+      (assignment) =>
+        assignment.status === 'ACTIVE' &&
+        assignment.group.id === selectedGroupId &&
+        (assignment.responsibility === 'ATTENDANCE' || assignment.responsibility === 'FULL'),
+    );
+  }, [assignments, isManager, selectedGroupId]);
 
   const loadGroupStudents = useCallback(
     async (groupId = assignmentGroupId, assistantId = assignmentAssistantId) => {
@@ -699,7 +708,7 @@ export default function SessionsPage() {
                 </label>
               </div>
 
-              {isManager && (
+              {canCreateSession && (
                 <form onSubmit={createSession} className="space-y-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
                   <label className="space-y-2 text-sm font-bold text-slate-700">
                     <span>عنوان الحصة</span>
