@@ -4,12 +4,7 @@ import React, { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, Lock, Mail } from 'lucide-react';
 import api from '@/lib/axios';
-
-const allowedRoles = ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER', 'ASSISTANT'];
-
-function homeForRole(role: string) {
-  return role === 'ASSISTANT' ? '/sessions' : '/dashboard';
-}
+import { extractAuthUser, homeForRole } from '@/lib/auth';
 
 function getErrorMessage(error: unknown) {
   const response = (error as { response?: { data?: { error?: string; message?: string | string[] } } }).response;
@@ -29,19 +24,39 @@ export default function LoginPage() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    const userStr = localStorage.getItem('user');
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        if (allowedRoles.includes(user.role)) {
-          router.push(homeForRole(user.role));
-          return;
+    let cancelled = false;
+
+    const verifyExistingSession = async () => {
+      const userStr = localStorage.getItem('user');
+      if (!userStr) {
+        if (!cancelled) {
+          setChecking(false);
         }
-      } catch {
-        localStorage.clear();
+        return;
       }
-    }
-    setChecking(false);
+
+      try {
+        const response = await api.get('/auth/me');
+        const user = extractAuthUser(response.data);
+        if (!user) {
+          throw new Error('Unauthorized role');
+        }
+
+        localStorage.setItem('user', JSON.stringify(user));
+        router.replace(homeForRole(user.role));
+      } catch {
+        localStorage.removeItem('user');
+        if (!cancelled) {
+          setChecking(false);
+        }
+      }
+    };
+
+    void verifyExistingSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const handleSubmit = async (event: FormEvent) => {
@@ -50,15 +65,16 @@ export default function LoginPage() {
     setError('');
 
     try {
+      localStorage.removeItem('user');
       const response = await api.post('/auth/login', { email, password });
-      const user = response.data?.data?.user;
-      if (!user || !allowedRoles.includes(user.role)) {
+      const user = extractAuthUser(response.data);
+      if (!user) {
         setError('هذا الحساب غير مصرح له بدخول نظام الحسابات.');
         return;
       }
 
       localStorage.setItem('user', JSON.stringify(user));
-      router.push(homeForRole(user.role));
+      router.replace(homeForRole(user.role));
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {

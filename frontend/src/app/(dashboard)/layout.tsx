@@ -1,38 +1,52 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import api from '@/lib/axios';
-
-const allowedRoles = ['ADMIN', 'ACCOUNTANT', 'FINANCE_MANAGER', 'ASSISTANT'];
+import { canAccessDashboardPath, extractAuthUser, homeForRole } from '@/lib/auth';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+
     const verifyAuth = async () => {
-      const userStr = localStorage.getItem('user');
-      if (!userStr) {
-        window.location.href = '/';
-        return;
-      }
+      setAuthorized(false);
 
       try {
         const response = await api.get('/auth/me');
-        const user = response.data.data || response.data;
+        const user = extractAuthUser(response.data);
 
-        if (!allowedRoles.includes(user.role)) {
+        if (!user) {
           throw new Error('Unauthorized role');
         }
-        setAuthorized(true);
+
+        localStorage.setItem('user', JSON.stringify(user));
+
+        if (!canAccessDashboardPath(user.role, pathname)) {
+          router.replace(homeForRole(user.role));
+          return;
+        }
+
+        if (!cancelled) {
+          setAuthorized(true);
+        }
       } catch {
         localStorage.removeItem('user');
-        window.location.href = '/';
+        router.replace('/');
       }
     };
 
     void verifyAuth();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, router]);
 
   if (!authorized) {
     return (

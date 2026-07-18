@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import api from '@/lib/axios';
+import { AccountingRole, extractAuthUser } from '@/lib/auth';
 import {
   BarChart3,
   BellRing,
@@ -20,37 +21,65 @@ import {
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [userRole, setUserRole] = React.useState<string>('');
+  const [userRole, setUserRole] = React.useState<AccountingRole | ''>('');
 
   React.useEffect(() => {
+    let cancelled = false;
+
     const userStr = localStorage.getItem('user');
     if (userStr) {
       try {
-        const user = JSON.parse(userStr);
-        setUserRole(user.role);
+        const user = extractAuthUser(JSON.parse(userStr));
+        setUserRole(user?.role ?? '');
       } catch {
         setUserRole('');
       }
     }
+
+    const syncCurrentUser = async () => {
+      try {
+        const response = await api.get('/auth/me');
+        const user = extractAuthUser(response.data);
+        if (!user) {
+          throw new Error('Unauthorized role');
+        }
+        localStorage.setItem('user', JSON.stringify(user));
+        if (!cancelled) {
+          setUserRole(user.role);
+        }
+      } catch {
+        localStorage.removeItem('user');
+        if (!cancelled) {
+          setUserRole('');
+        }
+      }
+    };
+
+    void syncCurrentUser();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const links =
-    userRole === 'ASSISTANT'
+  const links = !userRole
+    ? []
+    : userRole === 'ASSISTANT'
       ? [{ name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck }]
       : [
-    { name: 'لوحة التحصيل', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'شؤون الطلاب', href: '/students', icon: UserRound },
-    { name: 'المجموعات الدراسية', href: '/groups', icon: Users },
-    { name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck },
-    { name: 'التحصيل والشهور', href: '/periods', icon: WalletCards },
-    { name: 'المصروفات العامة', href: '/expenses', icon: ReceiptText },
-    { name: 'متأخرات الدفع', href: '/alerts', icon: BellRing },
-    { name: 'التقارير', href: '/reports', icon: BarChart3 },
-    { name: 'رفع صورة حسابات', href: '/import', icon: ImageUp },
-    ...(userRole === 'ADMIN'
-      ? [{ name: 'مستخدمي النظام', href: '/admin/users', icon: ShieldCheck }]
-      : []),
-  ];
+          { name: 'لوحة التحصيل', href: '/dashboard', icon: LayoutDashboard },
+          { name: 'شؤون الطلاب', href: '/students', icon: UserRound },
+          { name: 'المجموعات الدراسية', href: '/groups', icon: Users },
+          { name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck },
+          { name: 'التحصيل والشهور', href: '/periods', icon: WalletCards },
+          { name: 'المصروفات العامة', href: '/expenses', icon: ReceiptText },
+          { name: 'متأخرات الدفع', href: '/alerts', icon: BellRing },
+          { name: 'التقارير', href: '/reports', icon: BarChart3 },
+          { name: 'رفع صورة حسابات', href: '/import', icon: ImageUp },
+          ...(userRole === 'ADMIN'
+            ? [{ name: 'مستخدمي النظام', href: '/admin/users', icon: ShieldCheck }]
+            : []),
+        ];
 
   const handleLogout = async () => {
     try {

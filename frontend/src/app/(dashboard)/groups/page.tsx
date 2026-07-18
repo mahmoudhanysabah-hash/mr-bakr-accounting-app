@@ -451,7 +451,7 @@ export default function GroupsPage() {
       {/* Batch Enroll Modal */}
       {showBatchModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-2xl shadow-2xl space-y-6 max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-2xl shadow-2xl space-y-6 max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center border-b border-slate-100 pb-4 shrink-0">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <UserPlus className="w-6 h-6 text-emerald-600" />
@@ -467,7 +467,7 @@ export default function GroupsPage() {
               </div>
             )}
 
-            <form onSubmit={handleBatchEnroll} className="flex-1 overflow-hidden flex flex-col space-y-4">
+            <form onSubmit={handleBatchEnroll} className="min-h-0 flex-1 overflow-hidden flex flex-col space-y-4">
               <div className="shrink-0 flex gap-4">
                 <div className="flex-1">
                   <label className="block text-xs font-bold text-slate-600 mb-2">تاريخ بدء الاشتراك</label>
@@ -485,7 +485,20 @@ export default function GroupsPage() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50 min-h-[300px]">
+              <div className="shrink-0 flex flex-col gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm font-bold text-emerald-900">
+                  تم اختيار <span className="text-base text-emerald-700">{selectedStudentIds.length}</span> طالب
+                </div>
+                <button
+                  type="submit"
+                  disabled={modalLoading || selectedStudentIds.length === 0}
+                  className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-emerald-800 disabled:opacity-50"
+                >
+                  {modalLoading ? 'جاري الإضافة...' : `إضافة ${selectedStudentIds.length} طالب للجروب`}
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50">
                 {studentsLoading ? (
                   <div className="flex justify-center items-center h-full">
                     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-emerald-500 border-r-2"></div>
@@ -512,16 +525,17 @@ export default function GroupsPage() {
                 )}
               </div>
               
-              <div className="shrink-0 flex justify-between items-center text-xs font-bold text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <span>إجمالي الطلاب المحددين:</span>
-                <span className="text-emerald-600 text-base">{selectedStudentIds.length} طالب</span>
-              </div>
-
-              <div className="flex gap-4 border-t border-slate-100 pt-4 shrink-0">
-                <button type="button" onClick={() => setShowBatchModal(false)} className="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold cursor-pointer hover:bg-slate-200">إلغاء</button>
-                <button type="submit" disabled={modalLoading || selectedStudentIds.length === 0} className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-500 disabled:bg-emerald-800 disabled:opacity-50 cursor-pointer transition-colors">
-                  {modalLoading ? 'جاري الإضافة...' : 'إضافة الطلاب للجروب'}
-                </button>
+              <div className="-mx-6 -mb-6 shrink-0 border-t border-slate-100 bg-white px-6 py-4 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]">
+                <div className="mb-3 flex justify-between items-center text-xs font-bold text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <span>إجمالي الطلاب المحددين:</span>
+                  <span className="text-emerald-600 text-base">{selectedStudentIds.length} طالب</span>
+                </div>
+                <div className="flex gap-4">
+                  <button type="button" onClick={() => setShowBatchModal(false)} className="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold cursor-pointer hover:bg-slate-200">إلغاء</button>
+                  <button type="submit" disabled={modalLoading || selectedStudentIds.length === 0} className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-500 disabled:bg-emerald-800 disabled:opacity-50 cursor-pointer transition-colors">
+                    {modalLoading ? 'جاري الإضافة...' : `إضافة ${selectedStudentIds.length} طالب للجروب`}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
