@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/axios';
+import { getBackendBaseUrl } from '@/lib/backend-url';
 import { 
   ArrowRight, 
   Wallet, 
@@ -530,7 +531,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
                           {payment.receipts?.length > 0 ? (
                             <div className="flex items-center gap-1">
                               <a
-                                href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'}/accounting/receipts/${payment.receipts[0].storage_key}`}
+                                href={`${getBackendBaseUrl()}/accounting/receipts/${payment.receipts[0].storage_key}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-xl hover:bg-indigo-100 transition-colors"

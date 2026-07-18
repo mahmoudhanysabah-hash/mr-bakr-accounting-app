@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '@/lib/axios';
+import { getBackendBaseUrl } from '@/lib/backend-url';
 import { 
   Plus, 
   FileText, 
@@ -217,7 +218,7 @@ export default function ExpensesPage() {
                     <td className="p-4">
                       {expense.receipt_storage_key ? (
                         <a
-                          href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'}/accounting/expenses/receipts/${expense.receipt_storage_key}`}
+                          href={`${getBackendBaseUrl()}/accounting/expenses/receipts/${expense.receipt_storage_key}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-xl hover:bg-indigo-100 transition-all"

@@ -1,27 +1,13 @@
-{
-  "services": {
+﻿{
+  "experimentalServices": {
     "frontend": {
-      "root": "frontend",
+      "entrypoint": "frontend",
+      "routePrefix": "/",
       "framework": "nextjs"
     },
     "backend": {
-      "root": "backend"
+      "entrypoint": "backend/src/main.ts",
+      "routePrefix": "/api/backend"
     }
-  },
-  "rewrites": [
-    {
-      "source": "/api/backend(/.*)?",
-      "destination": {
-        "type": "service",
-        "service": "backend"
-      }
-    },
-    {
-      "source": "/(.*)",
-      "destination": {
-        "type": "service",
-        "service": "frontend"
-      }
-    }
-  ]
+  }
 }
