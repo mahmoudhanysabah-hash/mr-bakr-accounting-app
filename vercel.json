@@ -6,12 +6,19 @@
     },
     "backend": {
       "root": "backend/",
-      "entrypoint": "src/main.ts"
+      "entrypoint": "src/main.ts",
+      "framework": "nestjs"
     }
   },
   "rewrites": [
     {
-      "source": "/api/backend(/.*)?",
+      "source": "/api/backend",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/api/backend/:path*",
       "destination": {
         "service": "backend"
       }

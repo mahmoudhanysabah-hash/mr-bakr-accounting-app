@@ -20,6 +20,15 @@ async function bootstrap() {
     : ['http://localhost:3002', 'http://127.0.0.1:3002'];
   
   app.use(cookieParser());
+  app.use((req, _res, next) => {
+    const prefix = '/api/backend';
+    if (req.url === prefix) {
+      req.url = '/';
+    } else if (req.url.startsWith(`${prefix}/`)) {
+      req.url = req.url.slice(prefix.length);
+    }
+    next();
+  });
   app.enableCors({
     origin: corsOrigins,
     credentials: true,
