@@ -1,149 +1,137 @@
-import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
-import * as bcrypt from 'bcrypt';
-import { Role } from '@prisma/client';
-import { createHash, randomBytes } from 'crypto';
+import { AuthTokenService, REFRESH_TOKEN_TTL_MS } from './services/auth-token.service';
+import { PasswordService } from './services/password.service';
+import {
+  AuthenticatedUser,
+  IssuedSession,
+  RequestMetadata,
+  SafeUserRecord,
+  UserWithPassword,
+  toAuthenticatedUser,
+} from './types/auth.types';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
-    private jwtService: JwtService,
-    private audit: AuditService,
-  ) { }
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly authTokenService: AuthTokenService,
+    private readonly passwordService: PasswordService,
+  ) {}
 
-  private hashToken(token: string) {
-    return createHash('sha256').update(token).digest('hex');
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 
-  private issueToken() {
-    return randomBytes(32).toString('hex');
-  }
-
-  private includeDevToken(token: string, fieldName: string) {
-    return process.env.NODE_ENV === 'production' ? {} : { [fieldName]: token };
-  }
-
-  async validateUser(email: string, pass: string): Promise<any> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (user && await bcrypt.compare(pass, user.password_hash)) {
-      if (user.status !== 'ACTIVE') throw new UnauthorizedException('User is not active');
-      if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true' && !user.email_verified) {
-        throw new UnauthorizedException('Email verification required');
-      }
-      const { password_hash, ...result } = user;
-      return result;
+  private includeDevToken(token: string, fieldName: string): Record<string, string> {
+    if (process.env.NODE_ENV === 'production' || process.env.ALLOW_DEV_AUTH_TOKENS !== 'true') {
+      return {};
     }
-    return null;
+    return { [fieldName]: token };
   }
 
-  async login(user: any, ipAddress?: string, userAgent?: string) {
-    const payload = { email: user.email, sub: user.id, role: user.role };
-
-    const accessToken = this.jwtService.sign(payload);
-    const refreshToken = this.jwtService.sign(payload, {
-      secret: process.env.JWT_REFRESH_SECRET as string,
-      expiresIn: '7d',
+  private async findUserForLogin(email: string): Promise<UserWithPassword | null> {
+    return this.prisma.user.findUnique({
+      where: { email: this.normalizeEmail(email) },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        password_hash: true,
+        role: true,
+        status: true,
+        email_verified: true,
+      },
     });
+  }
 
-    // Store the refresh token in a session
+  async validateUser(email: string, password: string): Promise<AuthenticatedUser | null> {
+    const user = await this.findUserForLogin(email);
+    if (!user || !(await this.passwordService.compare(password, user.password_hash))) {
+      return null;
+    }
+
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedException('User is not active');
+    }
+
+    if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true' && !user.email_verified) {
+      throw new UnauthorizedException('Email verification required');
+    }
+
+    return toAuthenticatedUser(user);
+  }
+
+  async login(user: SafeUserRecord, metadata: RequestMetadata = {}): Promise<IssuedSession> {
+    const authenticatedUser = toAuthenticatedUser(user);
+    const accessToken = this.authTokenService.createAccessToken(authenticatedUser);
+    const refreshToken = this.authTokenService.createRefreshToken(authenticatedUser);
+
     await this.prisma.session.create({
       data: {
-        user_id: user.id,
-        refresh_token: this.hashToken(refreshToken),
-        ip_address: ipAddress || 'unknown',
-        device_info: userAgent || 'unknown',
-        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-      }
+        user_id: authenticatedUser.id,
+        refresh_token: this.authTokenService.hash(refreshToken),
+        ip_address: metadata.ipAddress || 'unknown',
+        device_info: metadata.userAgent || 'unknown',
+        expires_at: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+      },
     });
-
-
 
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        email_verified: user.email_verified,
-      }
+      user: authenticatedUser,
     };
   }
 
-  async logout(refreshToken: string) {
+  async logout(refreshToken: string): Promise<{ loggedOut: true }> {
     await this.prisma.session.deleteMany({
-      where: { refresh_token: this.hashToken(refreshToken) }
+      where: { refresh_token: this.authTokenService.hash(refreshToken) },
     });
     return { loggedOut: true };
   }
 
-  async refreshTokens(userId: string, oldRefreshToken: string, ipAddress?: string, userAgent?: string) {
-    // Delete old token
-    await this.prisma.session.deleteMany({
-      where: { refresh_token: this.hashToken(oldRefreshToken) }
+  async refreshTokens(
+    userId: string,
+    oldRefreshToken: string,
+    metadata: RequestMetadata = {},
+  ): Promise<IssuedSession> {
+    const refreshTokenHash = this.authTokenService.hash(oldRefreshToken);
+    const session = await this.prisma.session.findUnique({
+      where: { refresh_token: refreshTokenHash },
+      include: { user: true },
     });
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new UnauthorizedException('User not found');
-
-    return this.login(user, ipAddress, userAgent);
-  }
-
-  async register(data: any) {
-    const existingUser = await this.prisma.user.findUnique({ where: { email: data.email } });
-    if (existingUser) {
-      throw new ConflictException('Email already exists');
+    if (
+      !session ||
+      session.user_id !== userId ||
+      session.expires_at < new Date() ||
+      session.user.status !== 'ACTIVE'
+    ) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    const salt = await bcrypt.genSalt();
-    const hash = await bcrypt.hash(data.password, salt);
-    const verificationToken = this.issueToken();
-    const verificationTokenHash = this.hashToken(verificationToken);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email: data.email,
-        name: data.name,
-        password_hash: hash,
-        role: data.role || Role.STUDENT,
-        email_verification_token: verificationTokenHash,
-        profile: {
-          create: {
-            phone: data.phone || null,
-          }
-        }
-      },
+    const revoked = await this.prisma.session.deleteMany({
+      where: { id: session.id, refresh_token: refreshTokenHash },
     });
+    if (revoked.count !== 1) {
+      throw new UnauthorizedException('Refresh token was already used');
+    }
 
-    await this.audit.log({
-      userId: user.id,
-      action: 'USER_REGISTERED',
-      entity: 'user',
-      entityId: user.id,
-      payload: { email: user.email },
-    });
-
-
-
-    const loginResult = await this.login(user);
-    return {
-      ...loginResult,
-      email_verification_required: !user.email_verified,
-      ...this.includeDevToken(verificationToken, 'dev_email_verification_token'),
-    };
+    return this.login(toAuthenticatedUser(session.user), metadata);
   }
 
-  async verifyEmail(token: string) {
-    const tokenHash = this.hashToken(token);
+  async verifyEmail(token: string): Promise<{ verified: true }> {
+    const tokenHash = this.authTokenService.hash(token);
     const user = await this.prisma.user.findFirst({
       where: { email_verification_token: tokenHash },
     });
 
-    if (!user) throw new BadRequestException('Invalid or expired verification token');
+    if (!user) {
+      throw new BadRequestException('Invalid or expired verification token');
+    }
 
     await this.prisma.user.update({
       where: { id: user.id },
@@ -163,16 +151,19 @@ export class AuthService {
     return { verified: true };
   }
 
-  async resendVerification(email?: string, ipAddress?: string, userAgent?: string) {
+  async resendVerification(
+    email?: string,
+    metadata: RequestMetadata = {},
+  ): Promise<Record<string, string | true>> {
     if (!email) return { sent: true };
 
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findUnique({ where: { email: this.normalizeEmail(email) } });
     if (!user || user.email_verified) return { sent: true };
 
-    const verificationToken = this.issueToken();
+    const verificationToken = this.authTokenService.createOpaqueToken();
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { email_verification_token: this.hashToken(verificationToken) },
+      data: { email_verification_token: this.authTokenService.hash(verificationToken) },
     });
 
     await this.audit.log({
@@ -180,7 +171,7 @@ export class AuthService {
       action: 'EMAIL_VERIFICATION_RESENT',
       entity: 'user',
       entityId: user.id,
-      payload: { ipAddress, userAgent },
+      payload: metadata,
     });
 
     return {
@@ -189,15 +180,18 @@ export class AuthService {
     };
   }
 
-  async forgotPassword(email: string, ipAddress?: string, userAgent?: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+  async forgotPassword(
+    email: string,
+    metadata: RequestMetadata = {},
+  ): Promise<Record<string, string | true>> {
+    const user = await this.prisma.user.findUnique({ where: { email: this.normalizeEmail(email) } });
     if (!user) return { sent: true };
 
-    const resetToken = this.issueToken();
+    const resetToken = this.authTokenService.createOpaqueToken();
     await this.prisma.user.update({
       where: { id: user.id },
       data: {
-        password_reset_token: this.hashToken(resetToken),
+        password_reset_token: this.authTokenService.hash(resetToken),
         password_reset_expires_at: new Date(Date.now() + 60 * 60 * 1000),
       },
     });
@@ -207,7 +201,7 @@ export class AuthService {
       action: 'PASSWORD_RESET_REQUESTED',
       entity: 'user',
       entityId: user.id,
-      payload: { ipAddress, userAgent },
+      payload: metadata,
     });
 
     return {
@@ -216,8 +210,12 @@ export class AuthService {
     };
   }
 
-  async resetPassword(token: string, password: string, ipAddress?: string, userAgent?: string) {
-    const tokenHash = this.hashToken(token);
+  async resetPassword(
+    token: string,
+    password: string,
+    metadata: RequestMetadata = {},
+  ): Promise<{ reset: true }> {
+    const tokenHash = this.authTokenService.hash(token);
     const user = await this.prisma.user.findFirst({
       where: {
         password_reset_token: tokenHash,
@@ -225,10 +223,11 @@ export class AuthService {
       },
     });
 
-    if (!user) throw new BadRequestException('Invalid or expired reset token');
+    if (!user) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
 
-    const salt = await bcrypt.genSalt();
-    const passwordHash = await bcrypt.hash(password, salt);
+    const passwordHash = await this.passwordService.hash(password);
 
     await this.prisma.$transaction([
       this.prisma.user.update({
@@ -247,7 +246,7 @@ export class AuthService {
       action: 'PASSWORD_RESET_COMPLETED',
       entity: 'user',
       entityId: user.id,
-      payload: { ipAddress, userAgent },
+      payload: metadata,
     });
 
     return { reset: true };

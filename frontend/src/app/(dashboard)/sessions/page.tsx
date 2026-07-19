@@ -2,6 +2,8 @@
 
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
+import { extractAuthUser } from '@/lib/auth';
 import {
   BookOpenCheck,
   CalendarCheck,
@@ -214,12 +216,7 @@ function optionalNumber(value: string) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  const response = (error as { response?: { data?: { error?: string; message?: string | string[] } } }).response;
-  const message = response?.data?.message;
-  if (response?.data?.error) return response.data.error;
-  if (Array.isArray(message)) return message.join('، ');
-  if (message) return message;
-  return fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 export default function SessionsPage() {
@@ -360,16 +357,31 @@ export default function SessionsPage() {
   }, []);
 
   useEffect(() => {
-    const userStr = localStorage.getItem('user');
-    if (!userStr) return;
-    try {
-      const user = JSON.parse(userStr);
-      setUserRole(user.role);
-      void loadBootstrap(user.role);
-    } catch {
-      setError('تعذر قراءة بيانات المستخدم الحالي');
-      setLoading(false);
-    }
+    let cancelled = false;
+
+    const loadCurrentUser = async () => {
+      try {
+        const response = await api.get('/auth/me');
+        const user = extractAuthUser(response.data);
+        if (!user) {
+          throw new Error('Unauthorized role');
+        }
+        if (!cancelled) {
+          setUserRole(user.role);
+          await loadBootstrap(user.role);
+        }
+      } catch {
+        if (!cancelled) {
+          setError('تعذر قراءة بيانات المستخدم الحالي');
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadCurrentUser();
+    return () => {
+      cancelled = true;
+    };
   }, [loadBootstrap]);
 
   useEffect(() => {

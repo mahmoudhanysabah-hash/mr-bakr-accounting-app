@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import { 
   Plus, 
   Users, 
@@ -82,7 +83,7 @@ export default function GroupsPage() {
       setRevenueTarget('');
       fetchGroups();
     } catch (err: any) {
-      setModalError(err.response?.data?.error || 'فشل إنشاء المجموعة الدراسية.');
+      setModalError(getApiErrorMessage(err, 'فشل إنشاء المجموعة الدراسية.'));
     } finally {
       setModalLoading(false);
     }
@@ -107,7 +108,7 @@ export default function GroupsPage() {
       setShowEditModal(false);
       fetchGroups();
     } catch (err: any) {
-      setModalError(err.response?.data?.error || 'فشل تعديل المجموعة الدراسية.');
+      setModalError(getApiErrorMessage(err, 'فشل تعديل المجموعة الدراسية.'));
     } finally {
       setModalLoading(false);
     }
@@ -122,7 +123,7 @@ export default function GroupsPage() {
       await api.delete(`/accounting/groups/${id}`);
       fetchGroups();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'فشل حذف المجموعة.');
+      alert(getApiErrorMessage(err, 'فشل حذف المجموعة.'));
     }
   };
 
@@ -173,7 +174,7 @@ export default function GroupsPage() {
       setShowBatchModal(false);
       fetchGroups();
     } catch (err: any) {
-      setModalError(err.response?.data?.error || 'فشل إضافة الطلاب للمجموعة.');
+      setModalError(getApiErrorMessage(err, 'فشل إضافة الطلاب للمجموعة.'));
     } finally {
       setModalLoading(false);
     }

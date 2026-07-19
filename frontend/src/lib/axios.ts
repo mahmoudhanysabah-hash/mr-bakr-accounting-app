@@ -1,38 +1,85 @@
-import axios from 'axios';
+import axios, { InternalAxiosRequestConfig } from 'axios';
 import { getBackendBaseUrl } from './backend-url';
+import { formatApiValue } from './error';
 
-const api = axios.create({
+const baseConfig = {
   baseURL: getBackendBaseUrl(),
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
-});
+};
 
-api.interceptors.request.use((config) => {
-  return config;
-});
+const api = axios.create(baseConfig);
+const refreshClient = axios.create(baseConfig);
+let refreshRequest: Promise<void> | null = null;
 
-// Intercept responses to handle global 401 Unauthorized errors gracefully
+type RetryableRequestConfig = InternalAxiosRequestConfig & {
+  _authRetry?: boolean;
+};
+
+function isPublicAuthRequest(url?: string): boolean {
+  return [
+    '/auth/login',
+    '/auth/refresh',
+    '/auth/logout',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+    '/auth/verify-email',
+    '/auth/resend-verification',
+  ].some((path) => url?.includes(path));
+}
+
+function normalizeApiError(error: unknown) {
+  const candidate = error as {
+    response?: { data?: { error?: unknown; message?: unknown } };
+  };
+  const normalizedError = formatApiValue(candidate.response?.data?.error);
+  const normalizedMessage = formatApiValue(candidate.response?.data?.message);
+  const normalizedValue = normalizedError || normalizedMessage;
+
+  if (candidate.response?.data && normalizedValue) {
+    candidate.response.data.error = normalizedValue;
+    candidate.response.data.message = normalizedValue;
+  }
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
-      localStorage.removeItem('user');
-      window.location.href = '/';
-    }
-    
-    // Map NestJS validation arrays to the 'error' property
-    if (error.response?.data?.message) {
-      if (Array.isArray(error.response.data.message)) {
-        error.response.data.error = error.response.data.message.join('، ');
-      } else if (typeof error.response.data.message === 'string') {
-        error.response.data.error = error.response.data.message;
+  async (error) => {
+    const config = error.config as RetryableRequestConfig | undefined;
+    const shouldRefresh =
+      error.response?.status === 401 &&
+      config &&
+      !config._authRetry &&
+      !isPublicAuthRequest(config.url);
+
+    if (shouldRefresh) {
+      config._authRetry = true;
+      try {
+        if (!refreshRequest) {
+          refreshRequest = refreshClient.post('/auth/refresh').then(() => undefined);
+        }
+        await refreshRequest;
+        return api.request(config);
+      } catch {
+        if (typeof window !== 'undefined') {
+          window.location.href = '/';
+        }
+      } finally {
+        refreshRequest = null;
       }
     }
 
+    if (error.response?.status === 401 && config && !isPublicAuthRequest(config.url)) {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/';
+      }
+    }
+
+    normalizeApiError(error);
     return Promise.reject(error);
-  }
+  },
 );
 
 export default api;

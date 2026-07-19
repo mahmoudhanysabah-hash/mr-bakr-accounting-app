@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import { getBackendBaseUrl } from '@/lib/backend-url';
 import { 
   ArrowRight, 
@@ -161,7 +162,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setEditPaymentId('');
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.message || 'حدث خطأ أثناء تسجيل/تعديل الدفعة');
+      setDialogError(getApiErrorMessage(err, 'حدث خطأ أثناء تسجيل/تعديل الدفعة'));
     } finally {
       setDialogLoading(false);
     }
@@ -186,7 +187,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setTransferReason('');
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.message || 'فشل نقل الطالب للمجموعة الأخرى.');
+      setDialogError(getApiErrorMessage(err, 'فشل نقل الطالب للمجموعة الأخرى.'));
     } finally {
       setDialogLoading(false);
     }
@@ -213,7 +214,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setRefundRef('');
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.error || 'فشل تسجيل الارتجاع المالي.');
+      setDialogError(getApiErrorMessage(err, 'فشل تسجيل الارتجاع المالي.'));
     } finally {
       setDialogLoading(false);
     }
@@ -241,7 +242,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setDiscountReason('');
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.error || 'فشل تطبيق الخصم.');
+      setDialogError(getApiErrorMessage(err, 'فشل تطبيق الخصم.'));
     } finally {
       setDialogLoading(false);
     }
@@ -266,7 +267,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setEnrollGroup('');
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.error || 'فشل تسجيل الاشتراك بالمجموعة.');
+      setDialogError(getApiErrorMessage(err, 'فشل تسجيل الاشتراك بالمجموعة.'));
     } finally {
       setDialogLoading(false);
     }
@@ -300,7 +301,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setShowChargeModal(false);
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.message || err.response?.data?.error || 'تعذر إضافة مطالبة للشهر المفتوح');
+      setDialogError(getApiErrorMessage(err, 'تعذر إضافة مطالبة للشهر المفتوح'));
     } finally {
       setDialogLoading(false);
     }
@@ -324,7 +325,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       setShowEditModal(false);
       loadStudentData();
     } catch (err: any) {
-      setDialogError(err.response?.data?.message || 'حدث خطأ أثناء الحفظ');
+      setDialogError(getApiErrorMessage(err, 'حدث خطأ أثناء الحفظ'));
     } finally {
       setDialogLoading(false);
     }
@@ -340,7 +341,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
       await api.delete(`/accounting/payments/${paymentId}`);
       loadStudentData();
     } catch (err: any) {
-      alert(err.response?.data?.message || 'حدث خطأ أثناء عكس الدفعة');
+      alert(getApiErrorMessage(err, 'حدث خطأ أثناء عكس الدفعة'));
     }
   };
 

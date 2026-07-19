@@ -52,4 +52,8 @@ Frontend runs on `http://localhost:3002` when started with the existing local po
 
 ## Deployment Notes
 
-Do not commit real `.env` files, backups, logs, import previews, screenshots, or exported accounting data. Use a private GitHub repository, then configure hosting environment variables directly on the hosting provider.
+Do not commit real .env files, backups, logs, import previews, screenshots, or exported accounting data. A public repository is safe only when it contains code and placeholders, never real credentials or accounting records.
+
+Configure these values in the hosting provider's protected environment settings: DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY, CORS_ORIGIN, and ALLOW_DEV_AUTH_TOKENS=false. Generate new secrets after any suspected exposure and invalidate old sessions by changing the JWT secrets.
+
+Authentication uses HttpOnly, Secure cookies in production. Public registration is disabled; staff accounts are created by an administrator. The frontend does not store access or refresh tokens in localStorage.

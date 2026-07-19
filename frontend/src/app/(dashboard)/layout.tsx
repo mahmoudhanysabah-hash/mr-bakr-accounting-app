@@ -25,8 +25,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           throw new Error('Unauthorized role');
         }
 
-        localStorage.setItem('user', JSON.stringify(user));
-
         if (!canAccessDashboardPath(user.role, pathname)) {
           router.replace(homeForRole(user.role));
           return;
@@ -36,7 +34,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           setAuthorized(true);
         }
       } catch {
-        localStorage.removeItem('user');
         router.replace('/');
       }
     };

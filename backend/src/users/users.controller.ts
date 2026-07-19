@@ -1,35 +1,37 @@
-import { Controller, Get, Param, Put, Body, UseGuards } from '@nestjs/common';
-import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { AuthenticatedUser } from '../auth/types/auth.types';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UsersService } from './users.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('users')
 export class UsersController {
-  constructor(private usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) {}
 
   @Roles(Role.ADMIN)
   @Get()
-  async getAllUsers() {
+  getAllUsers() {
     return this.usersService.findAll();
   }
 
   @Get('profile')
-  async getMyProfile(@CurrentUser() user: any) {
+  getMyProfile(@CurrentUser() user: AuthenticatedUser) {
     return this.usersService.findOne(user.id);
   }
 
   @Put('profile')
-  async updateMyProfile(@CurrentUser() user: any, @Body() data: any) {
+  updateMyProfile(@CurrentUser() user: AuthenticatedUser, @Body() data: UpdateProfileDto) {
     return this.usersService.updateProfile(user.id, data);
   }
 
   @Roles(Role.ADMIN, Role.ASSISTANT)
   @Get(':id')
-  async getUserById(@Param('id') id: string) {
+  getUserById(@Param('id') id: string) {
     return this.usersService.findOne(id);
   }
 }

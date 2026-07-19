@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import {
   BarChart3,
   BookOpenCheck,
@@ -215,12 +216,7 @@ function activityLabel(activity?: string | null) {
 }
 
 function errorMessage(error: unknown, fallback: string) {
-  const response = (error as { response?: { data?: { error?: string; message?: string | string[] } } }).response;
-  const message = response?.data?.message;
-  if (response?.data?.error) return response.data.error;
-  if (Array.isArray(message)) return message.join('، ');
-  if (message) return message;
-  return fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function csvCell(value: string | number | null | undefined) {

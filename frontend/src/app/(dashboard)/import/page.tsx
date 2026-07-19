@@ -2,6 +2,7 @@
 
 import React from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import {
   AlertCircle,
   CheckCircle2,
@@ -66,11 +67,7 @@ const makeRow = (defaults?: Partial<ImportRow>): ImportRow => {
 };
 
 const getErrorMessage = (err: unknown, fallback: string) => {
-  if (typeof err === 'object' && err && 'response' in err) {
-    const response = (err as { response?: { data?: { error?: string; message?: string } } }).response;
-    return response?.data?.error || response?.data?.message || fallback;
-  }
-  return fallback;
+  return getApiErrorMessage(err, fallback);
 };
 
 export default function ScreenshotImportPage() {

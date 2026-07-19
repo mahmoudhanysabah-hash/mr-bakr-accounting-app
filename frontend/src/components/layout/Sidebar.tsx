@@ -26,15 +26,6 @@ export default function Sidebar() {
   React.useEffect(() => {
     let cancelled = false;
 
-    const userStr = localStorage.getItem('user');
-    if (userStr) {
-      try {
-        const user = extractAuthUser(JSON.parse(userStr));
-        setUserRole(user?.role ?? '');
-      } catch {
-        setUserRole('');
-      }
-    }
 
     const syncCurrentUser = async () => {
       try {
@@ -43,12 +34,10 @@ export default function Sidebar() {
         if (!user) {
           throw new Error('Unauthorized role');
         }
-        localStorage.setItem('user', JSON.stringify(user));
         if (!cancelled) {
           setUserRole(user.role);
         }
       } catch {
-        localStorage.removeItem('user');
         if (!cancelled) {
           setUserRole('');
         }
@@ -87,7 +76,6 @@ export default function Sidebar() {
     } catch {
       // Keep local cleanup even if the server session is already gone.
     }
-    localStorage.removeItem('user');
     window.location.href = '/';
   };
 

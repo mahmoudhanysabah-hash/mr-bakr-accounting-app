@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import { 
   BellRing, 
   MessageSquare, 
@@ -64,7 +65,7 @@ export default function AlertsPage() {
       await api.post('/accounting/alerts/generate', { periodId: selectedPeriod });
       fetchAlerts();
     } catch (err: any) {
-      setActionError(err.response?.data?.error || 'فشل توليد التنبيهات.');
+      setActionError(getApiErrorMessage(err, 'فشل توليد التنبيهات.'));
     } finally {
       setActionLoading(false);
     }
@@ -75,7 +76,7 @@ export default function AlertsPage() {
       await api.patch(`/accounting/alerts/${id}`, { status });
       fetchAlerts();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'فشل تحديث حالة التنبيه.');
+      alert(getApiErrorMessage(err, 'فشل تحديث حالة التنبيه.'));
     }
   };
 

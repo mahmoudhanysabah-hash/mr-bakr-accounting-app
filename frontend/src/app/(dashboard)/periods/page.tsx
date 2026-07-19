@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import { 
   Plus, 
   Calendar, 
@@ -76,7 +77,7 @@ export default function PeriodsPage() {
       setShowOpenModal(false);
       fetchPeriods();
     } catch (err: any) {
-      setModalError(err.response?.data?.error || 'فشل فتح الدورة الشهرية. ربما تم فتح هذا الشهر مسبقاً.');
+      setModalError(getApiErrorMessage(err, 'فشل فتح الدورة الشهرية. ربما تم فتح هذا الشهر مسبقاً.'));
     } finally {
       setModalLoading(false);
     }
@@ -88,7 +89,7 @@ export default function PeriodsPage() {
       await api.post(`/accounting/periods/${id}/close`);
       fetchPeriods();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'فشل إغلاق الدورة الشهرية.');
+      alert(getApiErrorMessage(err, 'فشل إغلاق الدورة الشهرية.'));
     }
   };
 

@@ -4,15 +4,11 @@ import React, { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, Lock, Mail } from 'lucide-react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import { extractAuthUser, homeForRole } from '@/lib/auth';
 
 function getErrorMessage(error: unknown) {
-  const response = (error as { response?: { data?: { error?: string; message?: string | string[] } } }).response;
-  const message = response?.data?.message;
-  if (response?.data?.error) return response.data.error;
-  if (Array.isArray(message)) return message.join('، ');
-  if (message) return message;
-  return 'فشل تسجيل الدخول. تأكد من البريد وكلمة السر.';
+  return getApiErrorMessage(error, 'فشل تسجيل الدخول. تأكد من البريد وكلمة السر.');
 }
 
 export default function LoginPage() {
@@ -27,25 +23,14 @@ export default function LoginPage() {
     let cancelled = false;
 
     const verifyExistingSession = async () => {
-      const userStr = localStorage.getItem('user');
-      if (!userStr) {
-        if (!cancelled) {
-          setChecking(false);
-        }
-        return;
-      }
-
       try {
         const response = await api.get('/auth/me');
         const user = extractAuthUser(response.data);
         if (!user) {
           throw new Error('Unauthorized role');
         }
-
-        localStorage.setItem('user', JSON.stringify(user));
         router.replace(homeForRole(user.role));
       } catch {
-        localStorage.removeItem('user');
         if (!cancelled) {
           setChecking(false);
         }
@@ -65,7 +50,6 @@ export default function LoginPage() {
     setError('');
 
     try {
-      localStorage.removeItem('user');
       const response = await api.post('/auth/login', { email, password });
       const user = extractAuthUser(response.data);
       if (!user) {
@@ -73,7 +57,6 @@ export default function LoginPage() {
         return;
       }
 
-      localStorage.setItem('user', JSON.stringify(user));
       router.replace(homeForRole(user.role));
     } catch (err) {
       setError(getErrorMessage(err));

@@ -13,6 +13,8 @@ import {
   UserCheck,
 } from 'lucide-react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
+import { extractAuthUser } from '@/lib/auth';
 import { Modal } from '@/components/ui/Modal';
 
 type AccountingRole = 'ADMIN' | 'FINANCE_MANAGER' | 'ACCOUNTANT' | 'ASSISTANT';
@@ -66,12 +68,7 @@ function unwrapData<T>(payload: T | { data: T }): T {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  const response = (error as { response?: { data?: { error?: string; message?: string | string[] } } }).response;
-  const message = response?.data?.message;
-  if (response?.data?.error) return response.data.error;
-  if (Array.isArray(message)) return message.join('، ');
-  if (message) return message;
-  return fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function roleMeta(role: AccountingRole) {
@@ -108,23 +105,29 @@ export default function AdminUsersPage() {
   }, []);
 
   useEffect(() => {
-    const userStr = localStorage.getItem('user');
-    if (!userStr) {
-      router.push('/');
-      return;
-    }
+    let cancelled = false;
 
-    try {
-      const user = JSON.parse(userStr);
-      if (user.role !== 'ADMIN') {
-        router.push('/dashboard');
-        return;
+    const authorizeAndLoad = async () => {
+      try {
+        const response = await api.get('/auth/me');
+        const user = extractAuthUser(response.data);
+        if (!user || user.role !== 'ADMIN') {
+          router.replace('/dashboard');
+          return;
+        }
+        if (!cancelled) {
+          setIsAuthorized(true);
+          await loadUsers();
+        }
+      } catch {
+        router.replace('/');
       }
-      setIsAuthorized(true);
-      void loadUsers();
-    } catch {
-      router.push('/');
-    }
+    };
+
+    void authorizeAndLoad();
+    return () => {
+      cancelled = true;
+    };
   }, [loadUsers, router]);
 
   const filteredUsers = useMemo(() => {

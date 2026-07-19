@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
 import { getBackendBaseUrl } from '@/lib/backend-url';
 import { 
   Plus, 
@@ -109,7 +110,7 @@ export default function ExpensesPage() {
       setReceiptFile(null);
       fetchExpenses();
     } catch (err: any) {
-      setModalError(err.response?.data?.error || 'فشل تسجيل المصروفات.');
+      setModalError(getApiErrorMessage(err, 'فشل تسجيل المصروفات.'));
     } finally {
       setModalLoading(false);
     }
