@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma, Role, UserStatus } from '@prisma/client';
 import { AuditService } from '../common/audit.service';
 import { PasswordService } from '../auth/services/password.service';
-import { AuthenticatedUser } from '../auth/types/auth.types';
+import type { AuthenticatedUser } from '../auth/types/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStaffUserDto, UpdateStaffUserDto } from './dto/staff-user.dto';
 

@@ -3,7 +3,8 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { requireEnvironment } from '../../common/env.validation';
-import { AuthenticatedUser, JwtPayload, toAuthenticatedUser } from '../types/auth.types';
+import { toAuthenticatedUser } from '../types/auth.types';
+import type { AuthenticatedUser, JwtPayload } from '../types/auth.types';
 import { JWT_AUDIENCE, JWT_ISSUER } from '../services/auth-token.service';
 import { Request } from 'express';
 

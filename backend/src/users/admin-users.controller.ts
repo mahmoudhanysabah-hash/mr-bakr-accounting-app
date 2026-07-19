@@ -4,7 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { AuthenticatedUser } from '../auth/types/auth.types';
+import type { AuthenticatedUser } from '../auth/types/auth.types';
 import { CreateStaffUserDto, UpdateStaffUserDto } from './dto/staff-user.dto';
 import { AdminUsersService } from './admin-users.service';
 

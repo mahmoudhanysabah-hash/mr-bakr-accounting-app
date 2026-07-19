@@ -21,7 +21,7 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
-import { AuthenticatedRequest, AuthenticatedUser } from './types/auth.types';
+import type { AuthenticatedRequest, AuthenticatedUser } from './types/auth.types';
 
 @Controller('auth')
 export class AuthController {

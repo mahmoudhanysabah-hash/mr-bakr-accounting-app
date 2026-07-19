@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes } from 'crypto';
 import { requireEnvironment } from '../../common/env.validation';
-import { AuthenticatedUser, JwtPayload } from '../types/auth.types';
+import type { AuthenticatedUser, JwtPayload } from '../types/auth.types';
 
 export const JWT_ISSUER = 'mr-bakr-accounting';
 export const JWT_AUDIENCE = 'mr-bakr-internal';

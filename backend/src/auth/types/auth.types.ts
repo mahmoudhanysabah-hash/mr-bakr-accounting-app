@@ -1,5 +1,5 @@
-import { Role, User, UserStatus } from '@prisma/client';
-import { Request } from 'express';
+import type { Role, User, UserStatus } from '@prisma/client';
+import type { Request } from 'express';
 
 export type AuthenticatedUser = {
   id: string;
