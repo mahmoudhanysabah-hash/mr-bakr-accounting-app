@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   AccountingPaymentStatus,
@@ -40,7 +41,9 @@ import {
 
 @Injectable()
 export class AccountingService {
-  private readonly storagePath = path.join(process.cwd(), 'uploads', 'receipts');
+  private readonly storagePath = process.env.VERCEL === '1'
+    ? path.join(os.tmpdir(), 'mr-bakr', 'receipts')
+    : path.join(process.cwd(), 'uploads', 'receipts');
 
   constructor(
     private readonly prisma: PrismaService,
