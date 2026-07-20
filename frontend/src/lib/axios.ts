@@ -44,6 +44,12 @@ function normalizeApiError(error: unknown) {
   }
 }
 
+function redirectToLogin() {
+  if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+    window.location.replace('/');
+  }
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -63,18 +69,16 @@ api.interceptors.response.use(
         await refreshRequest;
         return api.request(config);
       } catch {
-        if (typeof window !== 'undefined') {
-          window.location.href = '/';
-        }
+        redirectToLogin();
+        normalizeApiError(error);
+        return Promise.reject(error);
       } finally {
         refreshRequest = null;
       }
     }
 
     if (error.response?.status === 401 && config && !isPublicAuthRequest(config.url)) {
-      if (typeof window !== 'undefined') {
-        window.location.href = '/';
-      }
+      redirectToLogin();
     }
 
     normalizeApiError(error);
