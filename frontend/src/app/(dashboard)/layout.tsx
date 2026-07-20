@@ -4,37 +4,38 @@ import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from '@/components/layout/Sidebar';
 import api from '@/lib/axios';
+import type { AuthUser } from '@/lib/auth';
 import { canAccessDashboardPath, extractAuthUser, homeForRole } from '@/lib/auth';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [authorized, setAuthorized] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
 
     const verifyAuth = async () => {
-      setAuthorized(false);
-
       try {
         const response = await api.get('/auth/me');
-        const user = extractAuthUser(response.data);
+        const currentUser = extractAuthUser(response.data);
 
-        if (!user) {
+        if (!currentUser) {
           throw new Error('Unauthorized role');
         }
 
-        if (!canAccessDashboardPath(user.role, pathname)) {
-          router.replace(homeForRole(user.role));
-          return;
-        }
-
         if (!cancelled) {
-          setAuthorized(true);
+          setUser(currentUser);
         }
       } catch {
-        router.replace('/');
+        if (!cancelled) {
+          router.replace('/');
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingAuth(false);
+        }
       }
     };
 
@@ -43,9 +44,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => {
       cancelled = true;
     };
-  }, [pathname, router]);
+  }, [router]);
 
-  if (!authorized) {
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    if (!canAccessDashboardPath(user.role, pathname)) {
+      router.replace(homeForRole(user.role));
+    }
+  }, [pathname, router, user]);
+
+  if (checkingAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 font-cairo text-white" dir="rtl">
         <div className="ml-3 h-8 w-8 animate-spin rounded-full border-t-2 border-emerald-500" />
@@ -54,9 +65,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
+  if (!user) {
+    return null;
+  }
+
+  const canRenderCurrentPath = canAccessDashboardPath(user.role, pathname);
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 font-cairo" dir="rtl">
-      <Sidebar />
+      <Sidebar userRole={user.role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="z-10 flex h-16 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white px-8">
           <h2 className="text-base font-bold text-slate-800">نظام إدارة الحسابات والتحصيل</h2>
@@ -67,7 +84,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
         <main className="flex-1 overflow-y-auto p-8">
-          <div className="mx-auto max-w-7xl">{children}</div>
+          <div className="mx-auto max-w-7xl">{canRenderCurrentPath ? children : null}</div>
         </main>
       </div>
     </div>

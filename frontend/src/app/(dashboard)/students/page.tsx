@@ -13,7 +13,6 @@ import {
   CheckCircle, 
   AlertCircle 
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 
 export default function StudentsPage() {
   const [students, setStudents] = useState<any[]>([]);

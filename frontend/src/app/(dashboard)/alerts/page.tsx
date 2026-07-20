@@ -11,7 +11,6 @@ import {
   Copy,
   RefreshCw
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<any[]>([]);

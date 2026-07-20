@@ -11,7 +11,6 @@ import {
   AlertCircle,
   FileText
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 import Link from 'next/link';
 
 export default function PeriodDetailsPage({ params }: { params: Promise<{ id: string }> }) {

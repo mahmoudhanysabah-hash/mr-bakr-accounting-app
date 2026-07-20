@@ -12,7 +12,6 @@ import {
   Calendar,
   Wallet
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 import { 
   BarChart, 
   Bar, 
@@ -123,11 +122,8 @@ export default function AccountingDashboard() {
       {/* Grid Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {cards.map((card, idx) => (
-          <motion.div
+          <div
             key={idx}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: idx * 0.05 }}
             className={`border p-6 rounded-2xl shadow-sm flex flex-col justify-between h-40 transition-all ${card.color}`}
           >
             <div className="flex justify-between items-start">
@@ -138,7 +134,7 @@ export default function AccountingDashboard() {
               <span className="text-2xl font-black text-slate-800 tracking-tight">{card.value}</span>
               <p className="text-xs text-slate-400 mt-1 font-semibold">{card.desc}</p>
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
 

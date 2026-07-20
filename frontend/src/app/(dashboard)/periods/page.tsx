@@ -13,7 +13,6 @@ import {
   AlertCircle,
   FolderOpen
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 import Link from 'next/link';
 
 export default function PeriodsPage() {

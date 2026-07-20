@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import api from '@/lib/axios';
-import { AccountingRole, extractAuthUser } from '@/lib/auth';
+import { AccountingRole } from '@/lib/auth';
 import {
   BarChart3,
   BellRing,
@@ -19,56 +19,29 @@ import {
   WalletCards,
 } from 'lucide-react';
 
-export default function Sidebar() {
+type SidebarProps = {
+  userRole: AccountingRole;
+};
+
+export default function Sidebar({ userRole }: SidebarProps) {
   const pathname = usePathname();
-  const [userRole, setUserRole] = React.useState<AccountingRole | ''>('');
 
-  React.useEffect(() => {
-    let cancelled = false;
-
-
-    const syncCurrentUser = async () => {
-      try {
-        const response = await api.get('/auth/me');
-        const user = extractAuthUser(response.data);
-        if (!user) {
-          throw new Error('Unauthorized role');
-        }
-        if (!cancelled) {
-          setUserRole(user.role);
-        }
-      } catch {
-        if (!cancelled) {
-          setUserRole('');
-        }
-      }
-    };
-
-    void syncCurrentUser();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const links = !userRole
-    ? []
-    : userRole === 'ASSISTANT'
-      ? [{ name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck }]
-      : [
-          { name: 'لوحة التحصيل', href: '/dashboard', icon: LayoutDashboard },
-          { name: 'شؤون الطلاب', href: '/students', icon: UserRound },
-          { name: 'المجموعات الدراسية', href: '/groups', icon: Users },
-          { name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck },
-          { name: 'التحصيل والشهور', href: '/periods', icon: WalletCards },
-          { name: 'المصروفات العامة', href: '/expenses', icon: ReceiptText },
-          { name: 'متأخرات الدفع', href: '/alerts', icon: BellRing },
-          { name: 'التقارير', href: '/reports', icon: BarChart3 },
-          { name: 'رفع صورة حسابات', href: '/import', icon: ImageUp },
-          ...(userRole === 'ADMIN'
-            ? [{ name: 'مستخدمي النظام', href: '/admin/users', icon: ShieldCheck }]
-            : []),
-        ];
+  const links = userRole === 'ASSISTANT'
+    ? [{ name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck }]
+    : [
+        { name: 'لوحة التحصيل', href: '/dashboard', icon: LayoutDashboard },
+        { name: 'شؤون الطلاب', href: '/students', icon: UserRound },
+        { name: 'المجموعات الدراسية', href: '/groups', icon: Users },
+        { name: 'تشغيل الحصص', href: '/sessions', icon: CalendarCheck },
+        { name: 'التحصيل والشهور', href: '/periods', icon: WalletCards },
+        { name: 'المصروفات العامة', href: '/expenses', icon: ReceiptText },
+        { name: 'متأخرات الدفع', href: '/alerts', icon: BellRing },
+        { name: 'التقارير', href: '/reports', icon: BarChart3 },
+        { name: 'رفع صورة حسابات', href: '/import', icon: ImageUp },
+        ...(userRole === 'ADMIN'
+          ? [{ name: 'مستخدمي النظام', href: '/admin/users', icon: ShieldCheck }]
+          : []),
+      ];
 
   const handleLogout = async () => {
     try {
@@ -76,7 +49,7 @@ export default function Sidebar() {
     } catch {
       // Keep local cleanup even if the server session is already gone.
     }
-    window.location.href = '/';
+    window.location.replace('/');
   };
 
   return (
@@ -100,7 +73,7 @@ export default function Sidebar() {
               <li key={link.href}>
                 <Link
                   href={link.href}
-                  className={`flex items-center gap-3.5 rounded-xl px-4 py-3.5 text-sm font-semibold transition-all duration-200 ${
+                  className={`flex items-center gap-3.5 rounded-xl px-4 py-3.5 text-sm font-semibold transition-colors duration-150 ${
                     active
                       ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/10'
                       : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
@@ -118,7 +91,7 @@ export default function Sidebar() {
       <div className="border-t border-slate-800 p-4">
         <button
           onClick={handleLogout}
-          className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 text-sm font-bold transition-all duration-200 hover:bg-red-600/90"
+          className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 text-sm font-bold transition-colors duration-150 hover:bg-red-600/90"
         >
           <LogOut className="h-4 w-4" />
           <span>تسجيل الخروج</span>

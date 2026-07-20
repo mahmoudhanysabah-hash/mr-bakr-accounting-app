@@ -21,7 +21,6 @@ import {
   ArrowLeftRight,
   Pencil
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 
 export default function StudentDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();

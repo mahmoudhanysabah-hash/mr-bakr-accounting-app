@@ -14,7 +14,6 @@ import {
   Trash2,
   UserPlus
 } from 'lucide-react';
-import { motion } from 'framer-motion';
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<any[]>([]);
@@ -210,10 +209,8 @@ export default function GroupsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {groups.map((group) => (
-            <motion.div
+            <div
               key={group.id}
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
               className="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative overflow-hidden"
             >
               {/* Badge type */}
@@ -296,7 +293,7 @@ export default function GroupsPage() {
                   <UserPlus className="w-4 h-4" /> إضافة طلاب
                 </button>
               </div>
-            </motion.div>
+            </div>
           ))}
           {groups.length === 0 && (
             <div className="col-span-full py-16 text-center text-slate-400 font-bold">
