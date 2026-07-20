@@ -15,7 +15,7 @@ function safeErrorMessage(error: unknown): string {
   return 'Unknown bootstrap error';
 }
 
-async function bootstrap() {
+export async function bootstrap() {
   let startupStage = 'environment_validation';
 
   try {
@@ -77,6 +77,12 @@ async function bootstrap() {
   }
 }
 
-void bootstrap().catch((error) => {
-  console.error(`[Backend startup unhandled] ${safeErrorMessage(error)}`);
-});
+export function startBackend() {
+  void bootstrap().catch((error) => {
+    console.error(`[Backend startup unhandled] ${safeErrorMessage(error)}`);
+  });
+}
+
+if (require.main === module) {
+  startBackend();
+}

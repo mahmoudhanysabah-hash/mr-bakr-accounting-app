@@ -6,8 +6,8 @@
     },
     "backend": {
       "root": "backend/",
-      "entrypoint": "src/main.ts",
-      "framework": "nestjs",
+      "entrypoint": "src/server.ts",
+      "framework": "express",
       "buildCommand": "npm run build"
     }
   },
