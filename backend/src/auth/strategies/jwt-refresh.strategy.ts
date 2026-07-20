@@ -6,7 +6,7 @@ import { requireEnvironment } from '../../common/env.validation';
 import { toAuthenticatedUser } from '../types/auth.types';
 import type { AuthenticatedUser, JwtPayload } from '../types/auth.types';
 import { JWT_AUDIENCE, JWT_ISSUER } from '../services/auth-token.service';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { createHash } from 'crypto';
 
 @Injectable()

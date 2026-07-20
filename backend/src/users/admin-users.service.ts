@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Role, UserStatus } from '@prisma/client';
+import { Role, UserStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { AuditService } from '../common/audit.service';
 import { PasswordService } from '../auth/services/password.service';
 import type { AuthenticatedUser } from '../auth/types/auth.types';
