@@ -1,4 +1,4 @@
-import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,17 +12,10 @@ import type { Request } from 'express';
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private readonly prisma: PrismaService) {
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        (request: Request) => {
-          const cookieToken = request.cookies?.access_token;
-          if (typeof cookieToken === 'string' && cookieToken) return cookieToken;
-
-          const authorization = request.headers.authorization;
-          if (!authorization) return null;
-          const [scheme, token] = authorization.split(' ');
-          return scheme?.toLowerCase() === 'bearer' && token ? token : null;
-        },
-      ]),
+      jwtFromRequest: (request: Request) => {
+        const cookieToken = request.cookies?.access_token;
+        return typeof cookieToken === 'string' && cookieToken ? cookieToken : null;
+      },
       algorithms: ['HS256'],
       audience: JWT_AUDIENCE,
       ignoreExpiration: false,
@@ -32,22 +25,35 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        status: true,
-        email_verified: true,
+    if (!payload.sid) {
+      throw new UnauthorizedException('Session missing from access token');
+    }
+
+    const session = await this.prisma.session.findUnique({
+      where: { id: payload.sid },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            status: true,
+            email_verified: true,
+          },
+        },
       },
     });
 
-    if (!user || user.status !== 'ACTIVE') {
-      throw new UnauthorizedException('User inactive or not found');
+    if (
+      !session ||
+      session.user_id !== payload.sub ||
+      session.expires_at < new Date() ||
+      session.user.status !== 'ACTIVE'
+    ) {
+      throw new UnauthorizedException('Session inactive or not found');
     }
 
-    return toAuthenticatedUser(user);
+    return toAuthenticatedUser(session.user);
   }
 }

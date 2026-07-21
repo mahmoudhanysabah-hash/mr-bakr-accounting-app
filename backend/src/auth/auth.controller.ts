@@ -63,10 +63,7 @@ export class AuthController {
       return cookieToken;
     }
 
-    const authorization = req.headers.authorization;
-    if (!authorization) return undefined;
-    const [scheme, token] = authorization.split(' ');
-    return scheme?.toLowerCase() === 'bearer' && token ? token : undefined;
+    return undefined;
   }
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

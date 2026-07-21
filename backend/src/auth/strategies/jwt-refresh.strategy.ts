@@ -1,4 +1,4 @@
-import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -13,17 +13,10 @@ import { createHash } from 'crypto';
 export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
   constructor(private readonly prisma: PrismaService) {
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        (request: Request) => {
-          const cookieToken = request.cookies?.refresh_token;
-          if (typeof cookieToken === 'string' && cookieToken) return cookieToken;
-
-          const authorization = request.headers.authorization;
-          if (!authorization) return null;
-          const [scheme, token] = authorization.split(' ');
-          return scheme?.toLowerCase() === 'bearer' && token ? token : null;
-        },
-      ]),
+      jwtFromRequest: (request: Request) => {
+        const cookieToken = request.cookies?.refresh_token;
+        return typeof cookieToken === 'string' && cookieToken ? cookieToken : null;
+      },
       algorithms: ['HS256'],
       audience: JWT_AUDIENCE,
       ignoreExpiration: false,
@@ -34,7 +27,7 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
   }
 
   async validate(req: Request, payload: JwtPayload): Promise<AuthenticatedUser> {
-    const refreshToken = req.cookies?.refresh_token || this.readBearerToken(req);
+    const refreshToken = req.cookies?.refresh_token;
     if (typeof refreshToken !== 'string' || !refreshToken) {
       throw new UnauthorizedException('Refresh token missing');
     }
@@ -55,7 +48,13 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
       },
     });
 
-    if (!session || session.user_id !== payload.sub || session.expires_at < new Date()) {
+    if (
+      !payload.sid ||
+      !session ||
+      session.id !== payload.sid ||
+      session.user_id !== payload.sub ||
+      session.expires_at < new Date()
+    ) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
@@ -66,10 +65,4 @@ export class JwtRefreshStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
     return toAuthenticatedUser(session.user);
   }
 
-  private readBearerToken(req: Request): string | undefined {
-    const authorization = req.headers.authorization;
-    if (!authorization) return undefined;
-    const [scheme, token] = authorization.split(' ');
-    return scheme?.toLowerCase() === 'bearer' && token ? token : undefined;
-  }
 }

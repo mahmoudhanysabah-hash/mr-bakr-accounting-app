@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthTokenService, REFRESH_TOKEN_TTL_MS } from './services/auth-token.service';
@@ -66,11 +67,13 @@ export class AuthService {
 
   async login(user: SafeUserRecord, metadata: RequestMetadata = {}): Promise<IssuedSession> {
     const authenticatedUser = toAuthenticatedUser(user);
-    const accessToken = this.authTokenService.createAccessToken(authenticatedUser);
-    const refreshToken = this.authTokenService.createRefreshToken(authenticatedUser);
+    const sessionId = randomUUID();
+    const accessToken = this.authTokenService.createAccessToken(authenticatedUser, sessionId);
+    const refreshToken = this.authTokenService.createRefreshToken(authenticatedUser, sessionId);
 
     await this.prisma.session.create({
       data: {
+        id: sessionId,
         user_id: authenticatedUser.id,
         refresh_token: this.authTokenService.hash(refreshToken),
         ip_address: metadata.ipAddress || 'unknown',

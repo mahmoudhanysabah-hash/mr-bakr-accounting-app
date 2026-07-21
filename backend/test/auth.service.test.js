@@ -65,8 +65,14 @@ test('refreshTokens rotates the refresh token and rejects reuse', async () => {
   };
   const tokenService = {
     hash: (token) => `hash:${token}`,
-    createAccessToken: () => `access-${++tokenCounter}`,
-    createRefreshToken: () => `refresh-${tokenCounter}`,
+    createAccessToken: (_user, sessionId) => {
+      assert.ok(sessionId);
+      return `access-${++tokenCounter}`;
+    },
+    createRefreshToken: (_user, sessionId) => {
+      assert.ok(sessionId);
+      return `refresh-${tokenCounter}`;
+    },
   };
   const passwordService = {};
   const service = new AuthService(prisma, createAudit(), tokenService, passwordService);
@@ -75,6 +81,7 @@ test('refreshTokens rotates the refresh token and rejects reuse', async () => {
 
   assert.equal(result.refresh_token, 'refresh-1');
   assert.equal(createdSessions.length, 1);
+  assert.ok(createdSessions[0].id);
   assert.equal(createdSessions[0].refresh_token, 'hash:refresh-1');
   await assert.rejects(
     () => service.refreshTokens(activeUser.id, 'old-refresh-token'),

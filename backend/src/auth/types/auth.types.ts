@@ -16,6 +16,7 @@ export type AuthenticatedRequest = Request & {
 
 export type JwtPayload = {
   sub: string;
+  sid: string;
   email: string;
   role: Role;
   jti?: string;

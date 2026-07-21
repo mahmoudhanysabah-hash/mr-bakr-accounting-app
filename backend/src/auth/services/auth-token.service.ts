@@ -22,9 +22,10 @@ export class AuthTokenService {
     return randomBytes(32).toString('hex');
   }
 
-  createAccessToken(user: AuthenticatedUser): string {
+  createAccessToken(user: AuthenticatedUser, sessionId: string): string {
     const payload: JwtPayload = {
       sub: user.id,
+      sid: sessionId,
       email: user.email,
       role: user.role,
     };
@@ -36,9 +37,10 @@ export class AuthTokenService {
     });
   }
 
-  createRefreshToken(user: AuthenticatedUser): string {
+  createRefreshToken(user: AuthenticatedUser, sessionId: string): string {
     const payload: JwtPayload = {
       sub: user.id,
+      sid: sessionId,
       email: user.email,
       role: user.role,
       jti: randomBytes(16).toString('hex'),
