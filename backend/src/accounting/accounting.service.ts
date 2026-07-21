@@ -72,6 +72,8 @@ export class AccountingService {
         student_phone: dto.studentPhone?.trim(),
         guardian_name: dto.guardianName?.trim(),
         guardian_phone: dto.guardianPhone?.trim(),
+        grade_level: dto.gradeLevel?.trim(),
+        academic_track: dto.academicTrack,
         joined_at: new Date(dto.joinedAt),
         notes: dto.notes?.trim(),
       },
@@ -124,6 +126,22 @@ export class AccountingService {
       where: { id },
       include: {
         enrollments: { include: { group: true }, orderBy: { starts_at: 'desc' } },
+        attendance_records: {
+          include: {
+            session: { select: { id: true, title: true, session_date: true, status: true } },
+            group: { select: { id: true, code: true, name: true } },
+            contacts: { orderBy: { created_at: 'desc' } },
+          },
+          orderBy: { recorded_at: 'desc' },
+        },
+        academic_follow_ups: {
+          include: {
+            session: { select: { id: true, title: true, session_date: true, status: true } },
+            group: { select: { id: true, code: true, name: true } },
+            assistant: { select: { id: true, name: true, email: true } },
+          },
+          orderBy: { entry_date: 'desc' },
+        },
         charges: {
           include: {
             period: true,
@@ -157,6 +175,8 @@ export class AccountingService {
         student_phone: dto.studentPhone?.trim(),
         guardian_name: dto.guardianName?.trim(),
         guardian_phone: dto.guardianPhone?.trim(),
+        grade_level: dto.gradeLevel?.trim(),
+        academic_track: dto.academicTrack,
         status: dto.status,
         paused_at: dto.pausedAt ? new Date(dto.pausedAt) : undefined,
         withdrawn_at: dto.withdrawnAt ? new Date(dto.withdrawnAt) : undefined,

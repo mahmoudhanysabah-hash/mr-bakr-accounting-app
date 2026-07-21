@@ -20,6 +20,7 @@ import {
   AccountingPaymentMethod,
   AlertStatus,
   ChargeStatus,
+  AcademicTrack,
   ManagedStudentStatus,
 } from '@prisma/client';
 
@@ -43,6 +44,14 @@ export class CreateManagedStudentDto {
   @IsOptional()
   @IsString()
   guardianPhone?: string;
+
+  @IsOptional()
+  @IsString()
+  gradeLevel?: string;
+
+  @IsOptional()
+  @IsEnum(AcademicTrack)
+  academicTrack?: AcademicTrack;
 
   @IsDateString()
   joinedAt: string;
@@ -69,6 +78,14 @@ export class UpdateManagedStudentDto {
   @IsOptional()
   @IsString()
   guardianPhone?: string;
+
+  @IsOptional()
+  @IsString()
+  gradeLevel?: string;
+
+  @IsOptional()
+  @IsEnum(AcademicTrack)
+  academicTrack?: AcademicTrack;
 
   @IsOptional()
   @IsEnum(ManagedStudentStatus)

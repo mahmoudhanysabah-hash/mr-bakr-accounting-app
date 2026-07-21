@@ -5,6 +5,15 @@ import { useRouter } from 'next/navigation';
 import api from '@/lib/axios';
 import { getApiErrorMessage } from '@/lib/error';
 import { getBackendBaseUrl } from '@/lib/backend-url';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { 
   ArrowRight, 
   Wallet, 
@@ -49,6 +58,8 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
   const [editGuardianName, setEditGuardianName] = useState('');
   const [editGuardianPhone, setEditGuardianPhone] = useState('');
   const [editStatus, setEditStatus] = useState('ACTIVE');
+  const [editGradeLevel, setEditGradeLevel] = useState('');
+  const [editAcademicTrack, setEditAcademicTrack] = useState('');
 
   // Form Fields: Transfer
   const [transferEnrollmentId, setTransferEnrollmentId] = useState('');
@@ -382,6 +393,64 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
     }
   });
 
+  const academicSummary = (() => {
+    const followUps = Array.isArray(student.academic_follow_ups) ? student.academic_follow_ups : [];
+    const graded = followUps.filter((entry: any) => Number(entry.max_score) > 0 && Number.isFinite(Number(entry.score)));
+    const average = graded.length
+      ? graded.reduce((sum: number, entry: any) => sum + (Number(entry.score) / Number(entry.max_score)) * 100, 0) / graded.length
+      : 0;
+    const attendance = Array.isArray(student.attendance_records) ? student.attendance_records : [];
+    const present = attendance.filter((entry: any) => ['PRESENT', 'LATE', 'LEFT_EARLY'].includes(entry.status)).length;
+    const absent = attendance.filter((entry: any) => entry.status === 'ABSENT').length;
+    const late = attendance.filter((entry: any) => entry.status === 'LATE').length;
+    const progressLevel = average >= 85 ? 'ممتاز' : average >= 70 ? 'جيد جدًا' : average >= 50 ? 'يحتاج متابعة' : graded.length ? 'يحتاج تدخل' : 'لم يتم التقييم بعد';
+    return {
+      average: Math.round(average),
+      gradedCount: graded.length,
+      followUpCount: followUps.length,
+      present,
+      absent,
+      late,
+      attendanceCount: attendance.length,
+      progressLevel,
+      improvedCount: followUps.filter((entry: any) => entry.result === 'IMPROVED').length,
+    };
+  })();
+
+  const academicChartData = (() => {
+    const entries = Array.isArray(student.academic_follow_ups) ? student.academic_follow_ups : [];
+    const buckets = new Map<string, { date: string; title: string; scores: number[] }>();
+
+    entries.forEach((entry: any) => {
+      const score = Number(entry.score);
+      const maxScore = Number(entry.max_score);
+      if (!Number.isFinite(score) || !Number.isFinite(maxScore) || maxScore <= 0) return;
+
+      const date = entry.session?.session_date || entry.entry_date;
+      const key = entry.session?.id || String(date).slice(0, 10);
+      const bucket = buckets.get(key) || {
+        date,
+        title: entry.session?.title || 'متابعة أكاديمية',
+        scores: [],
+      };
+      bucket.scores.push(Math.max(0, Math.min(100, (score / maxScore) * 100)));
+      buckets.set(key, bucket);
+    });
+
+    return Array.from(buckets.values())
+      .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime())
+      .map((bucket, index) => ({
+        label: bucket.date
+          ? new Date(bucket.date).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })
+          : 'جلسة ' + (index + 1),
+        title: bucket.title,
+        score: Math.round(bucket.scores.reduce((sum, value) => sum + value, 0) / bucket.scores.length),
+        attempts: bucket.scores.length,
+      }));
+  })();
+
+  const activeEnrollments = (student.enrollments || []).filter((enrollment: any) => enrollment.status === 'ACTIVE');
+
   return (
     <div className="space-y-8 font-cairo" dir="rtl">
       {/* Top Breadcrumb & Action Header */}
@@ -462,6 +531,104 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
             <TrendingUp className="w-8 h-8 text-red-500" />
           </div>
         </div>
+      </div>
+
+      {/* Unified Student Profile */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-6">
+        <section className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+          <div className="flex items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-lg font-black text-slate-800">ملف المتابعة الأكاديمية</h2>
+              <p className="text-xs text-slate-500 mt-1">متوسط كل جلسة محسوب من الدرجات المسجلة لهذا الطالب.</p>
+            </div>
+            <div className="text-left">
+              <p className="text-2xl font-black text-indigo-600">{academicSummary.average}%</p>
+              <p className="text-[11px] font-bold text-slate-400">المتوسط العام</p>
+            </div>
+          </div>
+
+          {academicChartData.length > 0 ? (
+            <div className="h-72 w-full" dir="ltr">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={academicChartData} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    formatter={(value: any) => [String(value) + '%', 'متوسط الدرجة']}
+                    labelFormatter={(label: any) => 'الجلسة: ' + label}
+                    contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0', fontFamily: 'Cairo' }}
+                  />
+                  <Line type="monotone" dataKey="score" stroke="#4f46e5" strokeWidth={3} dot={{ r: 4, fill: '#4f46e5' }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-72 flex items-center justify-center rounded-xl bg-slate-50 text-sm font-bold text-slate-500">
+              لم يتم تسجيل درجات قابلة للرسم حتى الآن.
+            </div>
+          )}
+        </section>
+
+        <section className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-lg font-black text-slate-800">بطاقة الطالب الموحدة</h2>
+            <span className="px-3 py-1 rounded-full text-xs font-black bg-slate-50 text-slate-700">{student.status === 'ACTIVE' ? 'نشط' : student.status}</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <div className="rounded-xl bg-slate-50 p-4">
+              <p className="text-[11px] font-bold text-slate-400 mb-1">الصف الدراسي</p>
+              <p className="font-black text-slate-800">{student.grade_level || 'غير محدد'}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <p className="text-[11px] font-bold text-slate-400 mb-1">المسار</p>
+              <p className="font-black text-slate-800">
+                {student.academic_track ? '[' + student.academic_track + ']' : 'غير محدد'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            <div className="text-center rounded-xl border border-slate-100 p-3">
+              <p className="text-xl font-black text-slate-800">{academicSummary.present}</p>
+              <p className="text-[11px] font-bold text-slate-400">حضور</p>
+            </div>
+            <div className="text-center rounded-xl border border-slate-100 p-3">
+              <p className="text-xl font-black text-red-600">{academicSummary.absent}</p>
+              <p className="text-[11px] font-bold text-slate-400">غياب</p>
+            </div>
+            <div className="text-center rounded-xl border border-slate-100 p-3">
+              <p className="text-xl font-black text-amber-600">{academicSummary.late}</p>
+              <p className="text-[11px] font-bold text-slate-400">تأخير</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-bold text-slate-500">المستوى الحالي</span>
+              <span className="font-black text-indigo-700">{academicSummary.progressLevel}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-bold text-slate-500">جلسات بها تقييم</span>
+              <span className="font-black text-slate-800">{academicSummary.gradedCount}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-bold text-slate-500">المتابعات المسجلة</span>
+              <span className="font-black text-slate-800">{academicSummary.followUpCount}</span>
+            </div>
+            <div className="pt-3 border-t border-slate-100">
+              <p className="text-xs font-bold text-slate-500 mb-2">المجموعات الحالية</p>
+              <div className="flex flex-wrap gap-2">
+                {activeEnrollments.length > 0 ? activeEnrollments.map((enrollment: any) => (
+                  <span key={enrollment.id} className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-black">
+                    {enrollment.group?.name || enrollment.group?.code}
+                  </span>
+                )) : <span className="text-xs font-bold text-slate-400">لا توجد مجموعة نشطة</span>}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       {/* Tabs Menu */}
@@ -1151,6 +1318,21 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
                 <input type="text" value={editGuardianPhone} onChange={e => setEditGuardianPhone(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold" dir="ltr" />
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">الصف الدراسي [Grade]</label>
+                  <input type="text" value={editGradeLevel} onChange={e => setEditGradeLevel(e.target.value)} placeholder="مثال: [Grade 11]" className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">المسار الدراسي</label>
+                  <select name="academic-track-edit" value={editAcademicTrack} onChange={e => setEditAcademicTrack(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold">
+                    <option value="">غير محدد</option>
+                    <option value="SAT">[SAT]</option>
+                    <option value="EST">[EST]</option>
+                    <option value="OTHER">مسار آخر</option>
+                  </select>
+                </div>
+              </div>
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-2">حالة الطالب</label>
                 <select value={editStatus} onChange={e => setEditStatus(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold">

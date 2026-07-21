@@ -38,6 +38,8 @@ export default function StudentsPage() {
   const [studentPhone, setStudentPhone] = useState('');
   const [guardianName, setGuardianName] = useState('');
   const [guardianPhone, setGuardianPhone] = useState('');
+  const [gradeLevel, setGradeLevel] = useState('');
+  const [academicTrack, setAcademicTrack] = useState('');
   const [notes, setNotes] = useState('');
   const [joinsAt, setJoinsAt] = useState(new Date().toISOString().split('T')[0]);
   const [initialGroupId, setInitialGroupId] = useState('');
@@ -84,6 +86,8 @@ export default function StudentsPage() {
         studentPhone: studentPhone || undefined,
         guardianName: guardianName || undefined,
         guardianPhone: guardianPhone || undefined,
+        gradeLevel: gradeLevel || undefined,
+        academicTrack: academicTrack || undefined,
         notes: notes || undefined,
         joinedAt: new Date(joinsAt).toISOString()
       });
@@ -108,6 +112,8 @@ export default function StudentsPage() {
       setStudentPhone('');
       setGuardianName('');
       setGuardianPhone('');
+      setGradeLevel('');
+      setAcademicTrack('');
       setNotes('');
       setInitialGroupId('');
       fetchStudents();
@@ -305,6 +311,21 @@ export default function StudentsPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">الصف الدراسي [Grade]</label>
+                  <input type="text" value={gradeLevel} onChange={e => setGradeLevel(e.target.value)} placeholder="مثال: [Grade 11]" className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-2">المسار الدراسي</label>
+                  <select name="academic-track-create" value={academicTrack} onChange={e => setAcademicTrack(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl text-sm font-semibold">
+                    <option value="">غير محدد</option>
+                    <option value="SAT">[SAT]</option>
+                    <option value="EST">[EST]</option>
+                    <option value="OTHER">مسار آخر</option>
+                  </select>
+                </div>
+              </div>
               <div className="border-t border-slate-100 pt-4">
                 <h4 className="font-bold text-slate-800 text-sm mb-3">تفاصيل الاشتراك الأولي</h4>
                 <div className="grid grid-cols-3 gap-4">

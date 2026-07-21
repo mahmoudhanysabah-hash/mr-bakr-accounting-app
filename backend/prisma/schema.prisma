@@ -135,6 +135,12 @@ enum AcademicImprovementStatus {
   NOT_ASSESSED
 }
 
+enum AcademicTrack {
+  SAT
+  EST
+  OTHER
+}
+
 model User {
   id                        String     @id @default(uuid())
   name                      String
@@ -180,6 +186,8 @@ model ManagedStudent {
   student_phone  String?
   guardian_name  String?
   guardian_phone String?
+  grade_level    String?
+  academic_track AcademicTrack?
   status         ManagedStudentStatus @default(ACTIVE)
   joined_at      DateTime
   paused_at      DateTime?
