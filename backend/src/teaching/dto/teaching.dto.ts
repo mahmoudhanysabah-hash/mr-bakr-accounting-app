@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  Max,
   IsNumber,
   IsOptional,
   IsString,
@@ -238,4 +239,25 @@ export class CreateAcademicFollowUpDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+
+export class StudentAcademicReportQueryDto {
+  @IsString()
+  studentId: string;
+
+  @IsString()
+  groupId: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(2000)
+  @Max(2100)
+  year: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  month: number;
 }

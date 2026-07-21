@@ -1059,6 +1059,224 @@ export class TeachingService {
     };
   }
 
+  async getStudentAcademicReport(
+    user: any,
+    studentId: string,
+    groupId: string,
+    year: number,
+    month: number,
+  ) {
+    const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+
+    await this.ensureStudentAccess(
+      user,
+      studentId,
+      groupId,
+      AssistantResponsibility.ACADEMIC_FOLLOW_UP,
+    );
+
+    const enrollment = await this.prisma.studentEnrollment.findFirst({
+      where: {
+        student_id: studentId,
+        group_id: groupId,
+        starts_at: { lte: monthEnd },
+        OR: [{ ends_at: null }, { ends_at: { gte: monthStart } }],
+      },
+      include: {
+        student: true,
+        group: true,
+      },
+      orderBy: { starts_at: 'desc' },
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException('Student is not enrolled in this group during the selected month');
+    }
+
+    const periodStart = enrollment.starts_at > monthStart ? enrollment.starts_at : monthStart;
+    const periodEnd =
+      enrollment.ends_at && enrollment.ends_at < monthEnd ? enrollment.ends_at : monthEnd;
+
+    const [sessions, unlinkedFollowUps] = await Promise.all([
+      this.prisma.teachingSession.findMany({
+        where: {
+          group_id: groupId,
+          session_date: { gte: periodStart, lte: periodEnd },
+        },
+        include: {
+          attendance_records: {
+            where: { student_id: studentId },
+            include: {
+              contacts: {
+                orderBy: { created_at: 'desc' },
+              },
+            },
+          },
+          academic_follow_ups: {
+            where: { student_id: studentId },
+            orderBy: { entry_date: 'asc' },
+          },
+        },
+        orderBy: { session_date: 'asc' },
+      }),
+      this.prisma.academicFollowUpEntry.findMany({
+        where: {
+          student_id: studentId,
+          group_id: groupId,
+          session_id: null,
+          entry_date: { gte: periodStart, lte: periodEnd },
+        },
+        orderBy: { entry_date: 'asc' },
+      }),
+    ]);
+
+    const academicEntries = [
+      ...sessions.flatMap((session) => session.academic_follow_ups),
+      ...unlinkedFollowUps,
+    ];
+
+    const attendanceCounts = {
+      PRESENT: 0,
+      ABSENT: 0,
+      LATE: 0,
+      LEFT_EARLY: 0,
+      EXCUSED: 0,
+      UNRECORDED: 0,
+    };
+
+    sessions.forEach((session) => {
+      const attendance = session.attendance_records[0];
+      if (!attendance) {
+        attendanceCounts.UNRECORDED += 1;
+        return;
+      }
+      attendanceCounts[attendance.status] += 1;
+    });
+
+    const scorePercentages = academicEntries
+      .filter((entry) => entry.score != null && entry.max_score != null && Number(entry.max_score) > 0)
+      .map((entry) => (Number(entry.score) / Number(entry.max_score)) * 100);
+
+    const averageScorePercentage =
+      scorePercentages.length > 0
+        ? Math.round((scorePercentages.reduce((sum, value) => sum + value, 0) / scorePercentages.length) * 10) / 10
+        : null;
+
+    const resultCounts = {
+      IMPROVED: 0,
+      NOT_IMPROVED: 0,
+      NEEDS_MORE_WORK: 0,
+      NOT_ASSESSED: 0,
+    };
+    academicEntries.forEach((entry) => {
+      resultCounts[entry.result] += 1;
+    });
+
+    const difficultyCounts = new Map<string, number>();
+    academicEntries.forEach((entry) => {
+      const label = entry.error_type?.trim() || entry.question_type?.trim();
+      if (label) {
+        difficultyCounts.set(label, (difficultyCounts.get(label) || 0) + 1);
+      }
+    });
+
+    const needsSupportCount = resultCounts.NOT_IMPROVED + resultCounts.NEEDS_MORE_WORK;
+    let progressLevel = 'NO_DATA';
+    if (averageScorePercentage != null) {
+      if (averageScorePercentage >= 85 && needsSupportCount === 0) {
+        progressLevel = 'STRONG';
+      } else if (averageScorePercentage >= 70) {
+        progressLevel = 'GOOD';
+      } else if (averageScorePercentage >= 50) {
+        progressLevel = 'NEEDS_SUPPORT';
+      } else {
+        progressLevel = 'AT_RISK';
+      }
+    } else if (academicEntries.length > 0 && needsSupportCount > 0) {
+      progressLevel = 'NEEDS_SUPPORT';
+    }
+
+    const formatFollowUp = (entry: any) => ({
+      id: entry.id,
+      entryDate: entry.entry_date,
+      activityType: entry.activity_type,
+      score: entry.score == null ? null : Number(entry.score),
+      maxScore: entry.max_score == null ? null : Number(entry.max_score),
+      questionType: entry.question_type,
+      errorType: entry.error_type,
+      errorReason: entry.error_reason,
+      correction: entry.correction,
+      assistantAction: entry.assistant_action,
+      result: entry.result,
+      notes: entry.notes,
+    });
+
+    return {
+      filters: {
+        studentId,
+        groupId,
+        year,
+        month,
+        startDate: periodStart.toISOString(),
+        endDate: periodEnd.toISOString(),
+      },
+      student: {
+        id: enrollment.student.id,
+        code: enrollment.student.code,
+        name: enrollment.student.full_name,
+        guardianName: enrollment.student.guardian_name,
+      },
+      group: {
+        id: enrollment.group.id,
+        name: enrollment.group.name,
+        code: enrollment.group.code,
+      },
+      summary: {
+        totalSessions: sessions.length,
+        sessionsWithAcademicFollowUp: sessions.filter((session) => session.academic_follow_ups.length > 0).length,
+        academicFollowUps: academicEntries.length,
+        attendanceRecords: sessions.length - attendanceCounts.UNRECORDED,
+        attendanceRate:
+          sessions.length - attendanceCounts.UNRECORDED > 0
+            ? Math.round(
+                ((attendanceCounts.PRESENT + attendanceCounts.LATE) /
+                  (sessions.length - attendanceCounts.UNRECORDED)) *
+                  100,
+              )
+            : null,
+        averageScorePercentage,
+        progressLevel,
+        attendance: attendanceCounts,
+        results: resultCounts,
+        mainDifficulties: [...difficultyCounts.entries()]
+          .map(([label, count]) => ({ label, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5),
+      },
+      sessions: sessions.map((session) => {
+        const attendance = session.attendance_records[0] || null;
+        return {
+          id: session.id,
+          title: session.title,
+          date: session.session_date,
+          status: session.status,
+          attendance: attendance
+            ? {
+                status: attendance.status,
+                minutesLate: attendance.minutes_late,
+                leftEarlyMinutes: attendance.left_early_minutes,
+                notes: attendance.notes,
+                guardianContactStatus: attendance.contacts[0]?.status || null,
+              }
+            : null,
+          academicFollowUps: session.academic_follow_ups.map(formatFollowUp),
+        };
+      }),
+      unlinkedAcademicFollowUps: unlinkedFollowUps.map(formatFollowUp),
+    };
+  }
+
   async createAcademicFollowUp(dto: CreateAcademicFollowUpDto, user: any) {
     let groupId = dto.groupId;
     let sessionId = dto.sessionId;

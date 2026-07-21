@@ -13,6 +13,7 @@ import {
   UpdateAssignmentStatusDto,
   UpdateTeachingSessionStatusDto,
   UpsertAttendanceDto,
+  StudentAcademicReportQueryDto,
 } from './dto/teaching.dto';
 import { TeachingService } from './teaching.service';
 
@@ -79,6 +80,13 @@ export class TeachingController {
     return this.teaching.getOperationsReport(user, startDate, endDate, groupId, assistantId);
   }
 
+  @Get('reports/student-academic')
+  getStudentAcademicReport(
+    @CurrentUser() user: any,
+    @Query() query: StudentAcademicReportQueryDto,
+  ) {
+    return this.teaching.getStudentAcademicReport(user, query.studentId, query.groupId, query.year, query.month);
+  }
   @Post('sessions')
   createSession(@Body() dto: CreateTeachingSessionDto, @CurrentUser() user: any) {
     return this.teaching.createSession(dto, user);

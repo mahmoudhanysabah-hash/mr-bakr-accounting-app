@@ -29,7 +29,7 @@ export class UsersController {
     return this.usersService.updateProfile(user.id, data);
   }
 
-  @Roles(Role.ADMIN, Role.ASSISTANT)
+  @Roles(Role.ADMIN)
   @Get(':id')
   getUserById(@Param('id') id: string) {
     return this.usersService.findOne(id);

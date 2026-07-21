@@ -1,6 +1,7 @@
 'use client';
 
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import api from '@/lib/axios';
 import { getApiErrorMessage } from '@/lib/error';
 import { extractAuthUser } from '@/lib/auth';
@@ -14,6 +15,7 @@ import {
   PhoneCall,
   Plus,
   RefreshCw,
+  FileText,
   Save,
   Search,
   ShieldCheck,
@@ -657,6 +659,13 @@ export default function SessionsPage() {
             إنشاء الحصص، تسجيل الحضور، ومتابعة ولي الأمر للطلاب الغائبين.
           </p>
         </div>
+        <Link
+          href="/sessions/reports"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700"
+        >
+          <FileText className="h-4 w-4" />
+          تقارير الطلاب
+        </Link>
         <button
           type="button"
           onClick={() => {
