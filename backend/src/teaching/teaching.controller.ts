@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { AssistantResponsibility, Role } from '@prisma/client';
+import { Body, Controller, Get, Header, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -14,14 +14,25 @@ import {
   UpdateTeachingSessionStatusDto,
   UpsertAttendanceDto,
   StudentAcademicReportQueryDto,
+  GroupAcademicReportQueryDto,
 } from './dto/teaching.dto';
+import { RemoveTeachingEnrollmentDto, SaveLessonSheetDto } from './dto/lesson-sheet.dto';
 import { TeachingService } from './teaching.service';
+import { LessonSheetService } from './lesson-sheet.service';
+import { LessonReportService } from './lesson-report.service';
+import { TeachingActor } from './lesson-roster';
+import { TodayLessonService } from './today-lesson.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.ADMIN, Role.FINANCE_MANAGER, Role.ASSISTANT)
 @Controller('teaching')
 export class TeachingController {
-  constructor(private readonly teaching: TeachingService) {}
+  constructor(
+    private readonly teaching: TeachingService,
+    private readonly sheets: LessonSheetService,
+    private readonly reports: LessonReportService,
+    private readonly todayLessons: TodayLessonService,
+  ) {}
 
   @Get('assistants')
   @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
@@ -85,11 +96,56 @@ export class TeachingController {
     @CurrentUser() user: any,
     @Query() query: StudentAcademicReportQueryDto,
   ) {
-    return this.teaching.getStudentAcademicReport(user, query.studentId, query.groupId, query.year, query.month);
+    return this.reports.studentReport(user, query);
   }
+
+  @Get('reports/group-academic')
+  getGroupAcademicReport(@CurrentUser() user: TeachingActor, @Query() query: GroupAcademicReportQueryDto) {
+    return this.reports.groupReport(user, query);
+  }
+
+  @Get('sessions/:id/sheet')
+  getSheet(@Param('id') id: string, @CurrentUser() user: TeachingActor) {
+    return this.sheets.getSheet(id, user);
+  }
+
+  @Post('sessions/:id/sheet')
+  saveSheet(@Param('id') id: string, @Body() dto: SaveLessonSheetDto, @CurrentUser() user: TeachingActor) {
+    return this.sheets.saveSheet(id, dto, user);
+  }
+
+  @Get('sessions/:id/sheet-export')
+  getShareableSheet(@Param('id') id: string, @CurrentUser() user: TeachingActor) {
+    return this.sheets.getShareableSheet(id, user);
+  }
+
+  @Get('groups/:id/lesson-roster')
+  @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
+  manageLessonRoster(@Param('id') id: string, @CurrentUser() user: TeachingActor) {
+    return this.sheets.manageRoster(id, user);
+  }
+
+  @Patch('lesson-roster/:id')
+  @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
+  removeTeachingEnrollment(@Param('id') id: string, @Body() dto: RemoveTeachingEnrollmentDto, @CurrentUser() user: TeachingActor) {
+    return this.sheets.removeEnrollment(id, dto, user);
+  }
+
+  @Get('lesson-roster/:id/history')
+  @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
+  getTeachingHistory(@Param('id') id: string, @CurrentUser() user: TeachingActor) {
+    return this.sheets.getHistory(id, user);
+  }
+
   @Post('sessions')
   createSession(@Body() dto: CreateTeachingSessionDto, @CurrentUser() user: any) {
     return this.teaching.createSession(dto, user);
+  }
+
+  @Get('schedule/today')
+  @Header('Cache-Control', 'private, no-store')
+  getTodaySchedule(@CurrentUser() user: TeachingActor) {
+    return this.todayLessons.getToday(user);
   }
 
   @Get('sessions')

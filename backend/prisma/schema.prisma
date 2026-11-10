@@ -109,6 +109,7 @@ enum AttendanceStatus {
   LATE
   LEFT_EARLY
   EXCUSED
+  OTHER
 }
 
 enum GuardianContactStatus {
@@ -126,6 +127,11 @@ enum AcademicActivityType {
   QUIZ
   EXAM
   OTHER
+}
+
+enum TeachingAwardSource {
+  HOMEWORK
+  CLASSWORK
 }
 
 enum AcademicImprovementStatus {
@@ -172,6 +178,8 @@ model User {
   attendance_records        AttendanceRecord[] @relation("AttendanceRecordedBy")
   guardian_contact_logs     GuardianContactLog[] @relation("GuardianContactedBy")
   academic_follow_ups       AcademicFollowUpEntry[] @relation("AcademicFollowUpAssistant")
+  teaching_removals         StudentEnrollment[] @relation("TeachingRosterRemovedBy")
+  teaching_awards           TeachingIncentiveAward[]
 
   @@index([email])
   @@index([role, status])
@@ -264,15 +272,25 @@ model StudentEnrollment {
   notes                     String?
   created_at                DateTime         @default(now())
   updated_at                DateTime         @updatedAt
+  teaching_continues_after_end Boolean       @default(false)
+  teaching_removed_at       DateTime?
+  teaching_removed_by_id    String?
+  teaching_removal_reason    String?
+  teaching_last_session_id   String?
 
   student ManagedStudent  @relation(fields: [student_id], references: [id], onDelete: Restrict)
   group   AccountingGroup @relation(fields: [group_id], references: [id], onDelete: Restrict)
   charges MonthlyCharge[]
   attendance_records AttendanceRecord[]
+  academic_follow_ups AcademicFollowUpEntry[]
+  teaching_awards TeachingIncentiveAward[]
+  teaching_removed_by User? @relation("TeachingRosterRemovedBy", fields: [teaching_removed_by_id], references: [id], onDelete: SetNull)
+  teaching_last_session TeachingSession? @relation("TeachingLastSession", fields: [teaching_last_session_id], references: [id], onDelete: Restrict)
 
   @@index([student_id, status])
   @@index([group_id, status])
   @@index([starts_at, ends_at])
+  @@index([teaching_last_session_id])
   @@map("student_enrollments")
 }
 
@@ -584,6 +602,8 @@ model TeachingSession {
   attendance_records         AttendanceRecord[]
   guardian_contact_logs      GuardianContactLog[]
   academic_follow_ups        AcademicFollowUpEntry[]
+  last_for_enrollments       StudentEnrollment[] @relation("TeachingLastSession")
+  teaching_awards            TeachingIncentiveAward[]
 
   @@index([group_id, session_date])
   @@index([status, session_date])
@@ -596,9 +616,10 @@ model AttendanceRecord {
   student_id         String
   group_id           String
   enrollment_id      String?
-  status             AttendanceStatus @default(ABSENT)
+  status             AttendanceStatus
   recorded_by_id     String?
   recorded_at        DateTime         @default(now())
+  confirmed_at       DateTime?
   minutes_late       Int?
   left_early_minutes Int?
   notes              String?
@@ -654,6 +675,8 @@ model AcademicFollowUpEntry {
   student_id       String
   group_id         String
   assistant_id     String?
+  enrollment_id    String?
+  sheet_slot       AcademicActivityType?
   entry_date       DateTime
   activity_type    AcademicActivityType
   score            Decimal?                  @db.Decimal(12, 2)
@@ -672,11 +695,32 @@ model AcademicFollowUpEntry {
   student   ManagedStudent   @relation(fields: [student_id], references: [id], onDelete: Restrict)
   group     AccountingGroup  @relation(fields: [group_id], references: [id], onDelete: Restrict)
   assistant User?            @relation("AcademicFollowUpAssistant", fields: [assistant_id], references: [id], onDelete: SetNull)
+  enrollment StudentEnrollment? @relation(fields: [enrollment_id], references: [id], onDelete: Restrict)
 
   @@index([student_id, entry_date])
   @@index([group_id, entry_date])
   @@index([assistant_id, entry_date])
+  @@unique([session_id, student_id, sheet_slot])
+  @@index([enrollment_id])
   @@map("academic_follow_up_entries")
+}
+
+model TeachingIncentiveAward {
+  id             String              @id
+  session_id     String
+  enrollment_id  String
+  recorded_by_id String?
+  source         TeachingAwardSource
+  amount         Decimal             @db.Decimal(12, 2)
+  recorded_at    DateTime            @default(now())
+
+  session     TeachingSession   @relation(fields: [session_id], references: [id], onDelete: Restrict)
+  enrollment  StudentEnrollment @relation(fields: [enrollment_id], references: [id], onDelete: Restrict)
+  recorded_by User?              @relation(fields: [recorded_by_id], references: [id], onDelete: SetNull)
+
+  @@index([session_id])
+  @@index([enrollment_id])
+  @@map("teaching_incentive_awards")
 }
 
 model Profile {

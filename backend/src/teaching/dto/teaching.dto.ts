@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -84,6 +85,10 @@ export class CreateTeachingSessionDto {
 
   @IsDateString()
   sessionDate: string;
+
+  @IsOptional()
+  @Matches(/^(?:[01]\d|2[0-3]):[0-5]\d$/)
+  startTime?: string;
 
   @IsOptional()
   @IsDateString()
@@ -242,10 +247,7 @@ export class CreateAcademicFollowUpDto {
 }
 
 
-export class StudentAcademicReportQueryDto {
-  @IsString()
-  studentId: string;
-
+export class GroupAcademicReportQueryDto {
   @IsString()
   groupId: string;
 
@@ -260,4 +262,9 @@ export class StudentAcademicReportQueryDto {
   @Min(1)
   @Max(12)
   month: number;
+}
+
+export class StudentAcademicReportQueryDto extends GroupAcademicReportQueryDto {
+  @IsString()
+  studentId: string;
 }

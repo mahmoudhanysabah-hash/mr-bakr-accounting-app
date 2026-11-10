@@ -428,7 +428,7 @@ export class AccountingService {
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.studentEnrollment.update({
         where: { id: enrollment.id },
-        data: { status: EnrollmentStatus.ENDED, ends_at: effectiveAt, exit_reason: dto.reason.trim() },
+        data: { status: EnrollmentStatus.ENDED, ends_at: effectiveAt, exit_reason: dto.reason.trim(), teaching_continues_after_end: true },
       });
       return tx.studentEnrollment.create({
         data: {
@@ -464,7 +464,7 @@ export class AccountingService {
     const result = await this.prisma.$transaction(async (tx) => {
       const ended = await tx.studentEnrollment.update({
         where: { id },
-        data: { status: EnrollmentStatus.ENDED, ends_at: effectiveAt, exit_reason: dto.reason.trim() },
+        data: { status: EnrollmentStatus.ENDED, ends_at: effectiveAt, exit_reason: dto.reason.trim(), teaching_continues_after_end: true },
       });
       if (dto.studentStatus) {
         await tx.managedStudent.update({

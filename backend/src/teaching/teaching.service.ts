@@ -10,6 +10,7 @@ import {
   AssistantResponsibility,
   AttendanceStatus,
   GuardianContactStatus,
+  Prisma,
   Role,
   TeachingSessionStatus,
   UserStatus,
@@ -26,6 +27,8 @@ import {
   UpdateTeachingSessionStatusDto,
   UpsertAttendanceDto,
 } from './dto/teaching.dto';
+import { confirmedAttendanceWhere, isConfirmedAttendance, LessonRef, lessonTime, loadEnrollments, loadTeachingScope, rosterForLesson } from './lesson-roster';
+import { cairoDateKey, cairoDayRange, cairoLessonStart } from './cairo-calendar';
 
 const managerRoles = new Set<Role>([Role.ADMIN, Role.FINANCE_MANAGER]);
 
@@ -141,25 +144,6 @@ export class TeachingService {
     return count > 0;
   }
 
-  private async ensureAnyGroupAccess(user: any, groupId: string) {
-    if (this.isManager(user)) {
-      return;
-    }
-    if (user?.role !== Role.ASSISTANT) {
-      throw new ForbiddenException('This action is not allowed');
-    }
-    const count = await this.prisma.assistantGroupAssignment.count({
-      where: {
-        assistant_id: user.id,
-        group_id: groupId,
-        status: AssistantAssignmentStatus.ACTIVE,
-      },
-    });
-    if (count === 0) {
-      throw new ForbiddenException('Assistant is not assigned to this group');
-    }
-  }
-
   private async assignedGroupIds(user: any) {
     if (this.isManager(user)) {
       return undefined;
@@ -204,6 +188,14 @@ export class TeachingService {
 
   private userSelect() {
     return { id: true, name: true, email: true, phone: true, role: true, status: true } as const;
+  }
+
+  private async lessonRoster(lesson: LessonRef, studentIds?: string[]) {
+    return rosterForLesson(await loadEnrollments(this.prisma, lesson.group_id, lessonTime(lesson), studentIds), lesson);
+  }
+
+  private attendanceRosterWhere(roster: Awaited<ReturnType<TeachingService['lessonRoster']>>): Prisma.AttendanceRecordWhereInput {
+    return { OR: [...roster.values()].map((row) => ({ student_id: row.student_id, OR: [{ enrollment_id: row.id }, { enrollment_id: null }] })) };
   }
 
   listAssistants() {
@@ -427,12 +419,15 @@ export class TeachingService {
       }
     }
 
+    const sessionDate = new Date(dto.sessionDate);
+    if (dto.startsAt && dto.startTime) throw new BadRequestException('سجّل ميعاد الحصة مرة واحدة.');
+    const startsAt = dto.startTime ? cairoLessonStart(cairoDateKey(sessionDate), dto.startTime) : dto.startsAt ? new Date(dto.startsAt) : null;
     const session = await this.prisma.teachingSession.create({
       data: {
         group_id: group.id,
         title: dto.title?.trim() || null,
-        session_date: new Date(dto.sessionDate),
-        starts_at: dto.startsAt ? new Date(dto.startsAt) : null,
+        session_date: sessionDate,
+        starts_at: startsAt,
         ends_at: dto.endsAt ? new Date(dto.endsAt) : null,
         created_by_id: actorId,
         attendance_assistant_id: attendanceAssistantId,
@@ -442,34 +437,12 @@ export class TeachingService {
       },
     });
 
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: {
-        group_id: group.id,
-        status: 'ACTIVE',
-        student: { status: 'ACTIVE' },
-      },
-      select: { id: true, student_id: true },
-    });
-
-    if (enrollments.length > 0) {
-      await this.prisma.attendanceRecord.createMany({
-        data: enrollments.map((enrollment) => ({
-          session_id: session.id,
-          student_id: enrollment.student_id,
-          group_id: group.id,
-          enrollment_id: enrollment.id,
-          status: AttendanceStatus.ABSENT,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
     await this.audit.log({
       userId: actorId,
       action: 'TEACHING_SESSION_CREATED',
       entity: 'teaching_session',
       entityId: session.id,
-      payload: { groupId: group.id, studentsCount: enrollments.length },
+      payload: { groupId: group.id },
     });
 
     return this.getSession(session.id, user);
@@ -485,11 +458,9 @@ export class TeachingService {
     if (groupId) where.group_id = groupId;
     if (groupIds) where.group_id = { in: groupId ? groupIds.filter((id) => id === groupId) : groupIds };
     if (date) {
-      const start = new Date(date);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setDate(end.getDate() + 1);
-      where.session_date = { gte: start, lt: end };
+      const parsed = new Date(date);
+      if (!Number.isFinite(parsed.getTime())) throw new BadRequestException('اختار تاريخ حصة صحيح.');
+      where.session_date = cairoDayRange(/^\d{4}-\d{2}-\d{2}$/.test(date) ? date : cairoDateKey(parsed));
     }
 
     return this.prisma.teachingSession.findMany({
@@ -499,7 +470,7 @@ export class TeachingService {
         attendance_assistant: { select: this.userSelect() },
         guardian_contact_assistant: { select: this.userSelect() },
         academic_assistant: { select: this.userSelect() },
-        _count: { select: { attendance_records: true, guardian_contact_logs: true, academic_follow_ups: true } },
+        _count: { select: { attendance_records: { where: confirmedAttendanceWhere }, guardian_contact_logs: true, academic_follow_ups: true } },
       },
       orderBy: { session_date: 'desc' },
       take: 100,
@@ -507,15 +478,15 @@ export class TeachingService {
   }
 
   async getSession(id: string, user: any) {
-    const baseSession = await this.prisma.teachingSession.findUnique({
-      where: { id },
-      select: { group_id: true },
-    });
+    const baseSession = await this.prisma.teachingSession.findUnique({ where: { id } });
     if (!baseSession) {
       throw new NotFoundException('Teaching session not found');
     }
-    await this.ensureAnyGroupAccess(user, baseSession.group_id);
-    const allowedStudentIds = await this.assignedStudentIds(user, baseSession.group_id);
+    const scope = await loadTeachingScope(this.prisma, user, baseSession.group_id);
+    const roster = await this.lessonRoster(baseSession, scope.studentIds);
+    const allowed = (ids?: Set<string>) => [...roster.values()].filter((row) => scope.manager || ids?.has(row.student_id));
+    const byEnrollment = (ids?: Set<string>) => ({ OR: allowed(ids).map((row) => ({ student_id: row.student_id, OR: [{ enrollment_id: row.id }, { enrollment_id: null }] })) });
+    const safeStudent = { select: { id: true, code: true, full_name: true } } as const;
     const session = await this.prisma.teachingSession.findUnique({
       where: { id },
       include: {
@@ -524,11 +495,12 @@ export class TeachingService {
         guardian_contact_assistant: { select: this.userSelect() },
         academic_assistant: { select: this.userSelect() },
         attendance_records: {
-          where: allowedStudentIds ? { student_id: { in: allowedStudentIds } } : undefined,
+          where: { AND: [confirmedAttendanceWhere, byEnrollment(scope.attendance)] },
           include: {
-            student: true,
+            student: safeStudent,
             recorded_by: { select: this.userSelect() },
             contacts: {
+              where: { student_id: { in: allowed(scope.guardian).map((row) => row.student_id) } },
               include: { contacted_by: { select: this.userSelect() } },
               orderBy: { created_at: 'desc' },
             },
@@ -536,17 +508,17 @@ export class TeachingService {
           orderBy: { student: { full_name: 'asc' } },
         },
         guardian_contact_logs: {
-          where: allowedStudentIds ? { student_id: { in: allowedStudentIds } } : undefined,
+          where: { student_id: { in: allowed(scope.guardian).map((row) => row.student_id) } },
           include: {
-            student: true,
+            student: safeStudent,
             contacted_by: { select: this.userSelect() },
           },
           orderBy: { created_at: 'desc' },
         },
         academic_follow_ups: {
-          where: allowedStudentIds ? { student_id: { in: allowedStudentIds } } : undefined,
+          where: byEnrollment(scope.academic),
           include: {
-            student: true,
+            student: safeStudent,
             assistant: { select: this.userSelect() },
           },
           orderBy: { entry_date: 'desc' },
@@ -583,11 +555,21 @@ export class TeachingService {
       throw new NotFoundException('Teaching session not found');
     }
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.ATTENDANCE);
+    if (session.status === TeachingSessionStatus.CANCELLED) throw new BadRequestException('Teaching session is cancelled');
+    const roster = await this.lessonRoster(session, dto.records.map((row) => row.studentId));
 
     const records = [];
     for (const row of dto.records) {
-      const enrollment = await this.ensureStudentInGroup(row.studentId, session.group_id);
       await this.ensureStudentAccess(user, row.studentId, session.group_id, AssistantResponsibility.ATTENDANCE);
+      const enrollment = roster.get(row.studentId);
+      if (!enrollment) throw new BadRequestException('Student is not on the roster for this lesson');
+      const previous = await this.prisma.attendanceRecord.findUnique({ where: { session_id_student_id: { session_id: sessionId, student_id: row.studentId } } });
+      if (previous?.enrollment_id && previous.enrollment_id !== enrollment.id) throw new BadRequestException('Attendance belongs to another enrollment');
+      const notes = row.notes === undefined ? undefined : row.notes?.trim() || null;
+      if (row.status === AttendanceStatus.OTHER && !(notes === undefined ? previous?.notes : notes)) {
+        throw new BadRequestException('An explanation is required for other attendance');
+      }
+      const now = new Date();
       records.push(
         this.prisma.attendanceRecord.upsert({
           where: {
@@ -603,17 +585,20 @@ export class TeachingService {
             enrollment_id: enrollment.id,
             status: row.status,
             recorded_by_id: user?.id,
+            confirmed_at: now,
             minutes_late: row.minutesLate ?? null,
             left_early_minutes: row.leftEarlyMinutes ?? null,
-            notes: row.notes?.trim() || null,
+            notes,
           },
           update: {
             status: row.status,
             recorded_by_id: user?.id,
-            recorded_at: new Date(),
-            minutes_late: row.minutesLate ?? null,
-            left_early_minutes: row.leftEarlyMinutes ?? null,
-            notes: row.notes?.trim() || null,
+            recorded_at: now,
+            confirmed_at: now,
+            enrollment_id: enrollment.id,
+            minutes_late: row.minutesLate,
+            left_early_minutes: row.leftEarlyMinutes,
+            notes,
           },
           include: {
             student: true,
@@ -641,16 +626,16 @@ export class TeachingService {
     if (!session) throw new NotFoundException('Teaching session not found');
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.ATTENDANCE);
     const allowedStudentIds = await this.assignedStudentIds(user, session.group_id, AssistantResponsibility.ATTENDANCE);
+    const roster = await this.lessonRoster(session, allowedStudentIds);
 
     return this.prisma.attendanceRecord.findMany({
       where: {
         session_id: sessionId,
-        student_id: allowedStudentIds ? { in: allowedStudentIds } : undefined,
+        AND: [confirmedAttendanceWhere, this.attendanceRosterWhere(roster)],
       },
       include: {
-        student: true,
+        student: { select: { id: true, code: true, full_name: true } },
         recorded_by: { select: this.userSelect() },
-        contacts: { orderBy: { created_at: 'desc' } },
       },
       orderBy: { student: { full_name: 'asc' } },
     });
@@ -660,13 +645,15 @@ export class TeachingService {
     const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
     if (!session) throw new NotFoundException('Teaching session not found');
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+    if (session.status === TeachingSessionStatus.CANCELLED) return [];
     const allowedStudentIds = await this.assignedStudentIds(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+    const roster = await this.lessonRoster(session, allowedStudentIds);
 
     return this.prisma.attendanceRecord.findMany({
       where: {
         session_id: sessionId,
         status: { in: [AttendanceStatus.ABSENT, AttendanceStatus.EXCUSED] },
-        student_id: allowedStudentIds ? { in: allowedStudentIds } : undefined,
+        AND: [confirmedAttendanceWhere, this.attendanceRosterWhere(roster)],
       },
       include: {
         student: true,
@@ -684,41 +671,26 @@ export class TeachingService {
     if (!session) throw new NotFoundException('Teaching session not found');
     await this.ensureGroupAccess(user, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
     await this.ensureStudentAccess(user, dto.studentId, session.group_id, AssistantResponsibility.GUARDIAN_CONTACT);
+    if (session.status === TeachingSessionStatus.CANCELLED) throw new BadRequestException('Teaching session is cancelled');
 
-    const enrollment = await this.ensureStudentInGroup(dto.studentId, session.group_id);
-    let attendanceId = dto.attendanceId;
-    if (attendanceId) {
-      const attendance = await this.prisma.attendanceRecord.findUnique({ where: { id: attendanceId } });
-      if (!attendance || attendance.session_id !== session.id || attendance.student_id !== dto.studentId) {
-        throw new BadRequestException('Attendance record does not match this session and student');
-      }
-    } else {
-      const attendance = await this.prisma.attendanceRecord.upsert({
-        where: {
-          session_id_student_id: {
-            session_id: session.id,
-            student_id: dto.studentId,
-          },
-        },
-        create: {
-          session_id: session.id,
-          student_id: dto.studentId,
-          group_id: session.group_id,
-          enrollment_id: enrollment.id,
-          status: AttendanceStatus.ABSENT,
-        },
-        update: {},
-      });
-      attendanceId = attendance.id;
+    const enrollment = (await this.lessonRoster(session, [dto.studentId])).get(dto.studentId);
+    if (!enrollment) throw new BadRequestException('Student is not on the roster for this lesson');
+    const [record, student] = await Promise.all([
+      this.prisma.attendanceRecord.findUnique({ where: { session_id_student_id: { session_id: session.id, student_id: dto.studentId } } }),
+      this.prisma.managedStudent.findUnique({ where: { id: dto.studentId }, select: { guardian_phone: true } }),
+    ]);
+    const attendance = record && isConfirmedAttendance(record) && (!record.enrollment_id || record.enrollment_id === enrollment.id) ? record : null;
+    if (dto.attendanceId && dto.attendanceId !== attendance?.id) {
+      throw new BadRequestException('Attendance record is not confirmed for this lesson and student');
     }
 
     const contact = await this.prisma.guardianContactLog.create({
       data: {
-        attendance_id: attendanceId,
+        attendance_id: attendance?.id ?? null,
         session_id: session.id,
         student_id: dto.studentId,
         group_id: session.group_id,
-        guardian_phone: dto.guardianPhone?.trim() || enrollment.student.guardian_phone || null,
+        guardian_phone: dto.guardianPhone?.trim() || student?.guardian_phone || null,
         status: dto.status,
         response: dto.response?.trim() || null,
         contacted_by_id: user?.id,
@@ -800,27 +772,37 @@ export class TeachingService {
       group_id: groupFilter,
     };
 
-    const accessRows = this.isManager(user)
-      ? undefined
-      : await this.prisma.assistantStudentAssignment.findMany({
-          where: {
-            assistant_id: user?.id,
-            status: AssistantAssignmentStatus.ACTIVE,
-            group_id: groupFilter,
-          },
-          select: { group_id: true, student_id: true },
-          distinct: ['group_id', 'student_id'],
-        });
-    if (accessRows && accessRows.length === 0) {
+    const manager = this.isManager(user);
+    const assignmentFilter = { assistant_id: user?.id, status: AssistantAssignmentStatus.ACTIVE, group_id: groupFilter };
+    const [groupAssignments, studentAssignments] = manager ? [[], []] : await Promise.all([
+      this.prisma.assistantGroupAssignment.findMany({ where: assignmentFilter, select: { group_id: true, responsibility: true } }),
+      this.prisma.assistantStudentAssignment.findMany({ where: assignmentFilter, select: { group_id: true, student_id: true, responsibility: true } }),
+    ]);
+    if (!manager && !studentAssignments.length) {
       return this.emptyOperationsReport(start, end, groupId, assistantId);
     }
+    const dutyRoster = (responsibility: AssistantResponsibility) => {
+      const match = this.responsibilityFilter(responsibility);
+      const groups = new Set(groupAssignments.filter((row) => match.includes(row.responsibility)).map((row) => row.group_id));
+      const result = new Map<string, Set<string>>();
+      for (const row of studentAssignments) {
+        if (!groups.has(row.group_id) || !match.includes(row.responsibility)) continue;
+        const students = result.get(row.group_id) ?? new Set<string>();
+        students.add(row.student_id);
+        result.set(row.group_id, students);
+      }
+      return result;
+    };
+    const whereDuty = (roster: Map<string, Set<string>>) => manager ? {} : {
+      OR: [...roster].map(([group_id, ids]) => ({ group_id, student_id: { in: [...ids] } })),
+    };
+    const attendanceDuty = dutyRoster(AssistantResponsibility.ATTENDANCE);
+    const guardianDuty = dutyRoster(AssistantResponsibility.GUARDIAN_CONTACT);
+    const academicDuty = dutyRoster(AssistantResponsibility.ACADEMIC_FOLLOW_UP);
+    const canReadGuardian = (groupId: string, studentId: string) => manager || !!guardianDuty.get(groupId)?.has(studentId);
+    const assistantFilter = manager ? assistantId || undefined : undefined;
 
-    const studentAccessWhere = accessRows
-      ? { OR: accessRows.map((row) => ({ group_id: row.group_id, student_id: row.student_id })) }
-      : {};
-    const assistantFilter = this.isManager(user) ? assistantId || undefined : undefined;
-
-    const [sessions, attendanceRecords, guardianContacts, academicFollowUps] = await Promise.all([
+    const [sessions, rawAttendance, rawContacts, rawFollowUps] = await Promise.all([
       this.prisma.teachingSession.findMany({
         where: sessionWhere,
         include: { group: true },
@@ -829,7 +811,8 @@ export class TeachingService {
       this.prisma.attendanceRecord.findMany({
         where: {
           session: sessionWhere,
-          ...studentAccessWhere,
+          ...whereDuty(attendanceDuty),
+          AND: [confirmedAttendanceWhere],
           recorded_by_id: assistantFilter,
         },
         include: {
@@ -845,7 +828,7 @@ export class TeachingService {
       this.prisma.guardianContactLog.findMany({
         where: {
           session: sessionWhere,
-          ...studentAccessWhere,
+          ...whereDuty(guardianDuty),
           contacted_by_id: assistantFilter,
         },
         include: {
@@ -861,12 +844,13 @@ export class TeachingService {
         where: {
           entry_date: { gte: start, lte: end },
           group_id: groupFilter,
-          ...studentAccessWhere,
+          ...whereDuty(academicDuty),
           assistant_id: assistantFilter,
         },
         include: {
           student: true,
           group: true,
+          session: true,
           assistant: { select: this.userSelect() },
         },
         orderBy: { entry_date: 'desc' },
@@ -874,8 +858,21 @@ export class TeachingService {
       }),
     ]);
 
+    const includedSessions = sessions.filter((session) => session.status !== TeachingSessionStatus.CANCELLED);
+    const rosterGroups = new Map(await Promise.all([...new Set(includedSessions.map((session) => session.group_id))]
+      .map(async (id) => [id, await loadEnrollments(this.prisma, id)] as const)));
+    const rosters = new Map(includedSessions.map((session) => [session.id, rosterForLesson(rosterGroups.get(session.group_id) ?? [], session)]));
+    const isInRoster = (row: { session_id: string | null; student_id: string; enrollment_id?: string | null }) => {
+      if (!row.session_id) return true;
+      const enrollment = rosters.get(row.session_id)?.get(row.student_id);
+      return !!enrollment && (!row.enrollment_id || row.enrollment_id === enrollment.id);
+    };
+    const attendanceRecords = rawAttendance.filter(isInRoster);
+    const guardianContacts = rawContacts.filter(isInRoster);
+    const academicFollowUps = rawFollowUps.filter(isInRoster);
+
     const totals = {
-      sessions: sessions.length,
+      sessions: includedSessions.length,
       attendanceRecords: attendanceRecords.length,
       present: 0,
       absent: 0,
@@ -918,7 +915,7 @@ export class TeachingService {
         studentId: student.id,
         studentName: student.full_name,
         studentCode: student.code,
-        guardianPhone: student.guardian_phone,
+        guardianPhone: canReadGuardian(group.id, student.id) ? student.guardian_phone : null,
         groupName: group.name,
         absences: 0,
         late: 0,
@@ -947,7 +944,7 @@ export class TeachingService {
       return current;
     };
 
-    sessions.forEach((session) => {
+    includedSessions.forEach((session) => {
       const group = ensureGroup(session.group);
       group.sessions += 1;
     });
@@ -985,7 +982,7 @@ export class TeachingService {
         student.absences += 1;
         student.lastAbsenceDate = record.session.session_date;
       }
-      if ((record.status === AttendanceStatus.ABSENT || record.status === AttendanceStatus.EXCUSED) && record.contacts.length === 0) {
+      if (canReadGuardian(record.group_id, record.student_id) && (record.status === AttendanceStatus.ABSENT || record.status === AttendanceStatus.EXCUSED) && record.contacts.length === 0) {
         totals.uncontactedAbsences += 1;
         group.uncontactedAbsences += 1;
         student.uncontactedAbsences += 1;
@@ -1059,229 +1056,12 @@ export class TeachingService {
     };
   }
 
-  async getStudentAcademicReport(
-    user: any,
-    studentId: string,
-    groupId: string,
-    year: number,
-    month: number,
-  ) {
-    const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
-
-    await this.ensureStudentAccess(
-      user,
-      studentId,
-      groupId,
-      AssistantResponsibility.ACADEMIC_FOLLOW_UP,
-    );
-
-    const enrollment = await this.prisma.studentEnrollment.findFirst({
-      where: {
-        student_id: studentId,
-        group_id: groupId,
-        starts_at: { lte: monthEnd },
-        OR: [{ ends_at: null }, { ends_at: { gte: monthStart } }],
-      },
-      include: {
-        student: true,
-        group: true,
-      },
-      orderBy: { starts_at: 'desc' },
-    });
-
-    if (!enrollment) {
-      throw new NotFoundException('Student is not enrolled in this group during the selected month');
-    }
-
-    const periodStart = enrollment.starts_at > monthStart ? enrollment.starts_at : monthStart;
-    const periodEnd =
-      enrollment.ends_at && enrollment.ends_at < monthEnd ? enrollment.ends_at : monthEnd;
-
-    const [sessions, unlinkedFollowUps] = await Promise.all([
-      this.prisma.teachingSession.findMany({
-        where: {
-          group_id: groupId,
-          session_date: { gte: periodStart, lte: periodEnd },
-        },
-        include: {
-          attendance_records: {
-            where: { student_id: studentId },
-            include: {
-              contacts: {
-                orderBy: { created_at: 'desc' },
-              },
-            },
-          },
-          academic_follow_ups: {
-            where: { student_id: studentId },
-            orderBy: { entry_date: 'asc' },
-          },
-        },
-        orderBy: { session_date: 'asc' },
-      }),
-      this.prisma.academicFollowUpEntry.findMany({
-        where: {
-          student_id: studentId,
-          group_id: groupId,
-          session_id: null,
-          entry_date: { gte: periodStart, lte: periodEnd },
-        },
-        orderBy: { entry_date: 'asc' },
-      }),
-    ]);
-
-    const academicEntries = [
-      ...sessions.flatMap((session) => session.academic_follow_ups),
-      ...unlinkedFollowUps,
-    ];
-
-    const attendanceCounts = {
-      PRESENT: 0,
-      ABSENT: 0,
-      LATE: 0,
-      LEFT_EARLY: 0,
-      EXCUSED: 0,
-      UNRECORDED: 0,
-    };
-
-    sessions.forEach((session) => {
-      const attendance = session.attendance_records[0];
-      if (!attendance) {
-        attendanceCounts.UNRECORDED += 1;
-        return;
-      }
-      attendanceCounts[attendance.status] += 1;
-    });
-
-    const scorePercentages = academicEntries
-      .filter((entry) => entry.score != null && entry.max_score != null && Number(entry.max_score) > 0)
-      .map((entry) => (Number(entry.score) / Number(entry.max_score)) * 100);
-
-    const averageScorePercentage =
-      scorePercentages.length > 0
-        ? Math.round((scorePercentages.reduce((sum, value) => sum + value, 0) / scorePercentages.length) * 10) / 10
-        : null;
-
-    const resultCounts = {
-      IMPROVED: 0,
-      NOT_IMPROVED: 0,
-      NEEDS_MORE_WORK: 0,
-      NOT_ASSESSED: 0,
-    };
-    academicEntries.forEach((entry) => {
-      resultCounts[entry.result] += 1;
-    });
-
-    const difficultyCounts = new Map<string, number>();
-    academicEntries.forEach((entry) => {
-      const label = entry.error_type?.trim() || entry.question_type?.trim();
-      if (label) {
-        difficultyCounts.set(label, (difficultyCounts.get(label) || 0) + 1);
-      }
-    });
-
-    const needsSupportCount = resultCounts.NOT_IMPROVED + resultCounts.NEEDS_MORE_WORK;
-    let progressLevel = 'NO_DATA';
-    if (averageScorePercentage != null) {
-      if (averageScorePercentage >= 85 && needsSupportCount === 0) {
-        progressLevel = 'STRONG';
-      } else if (averageScorePercentage >= 70) {
-        progressLevel = 'GOOD';
-      } else if (averageScorePercentage >= 50) {
-        progressLevel = 'NEEDS_SUPPORT';
-      } else {
-        progressLevel = 'AT_RISK';
-      }
-    } else if (academicEntries.length > 0 && needsSupportCount > 0) {
-      progressLevel = 'NEEDS_SUPPORT';
-    }
-
-    const formatFollowUp = (entry: any) => ({
-      id: entry.id,
-      entryDate: entry.entry_date,
-      activityType: entry.activity_type,
-      score: entry.score == null ? null : Number(entry.score),
-      maxScore: entry.max_score == null ? null : Number(entry.max_score),
-      questionType: entry.question_type,
-      errorType: entry.error_type,
-      errorReason: entry.error_reason,
-      correction: entry.correction,
-      assistantAction: entry.assistant_action,
-      result: entry.result,
-      notes: entry.notes,
-    });
-
-    return {
-      filters: {
-        studentId,
-        groupId,
-        year,
-        month,
-        startDate: periodStart.toISOString(),
-        endDate: periodEnd.toISOString(),
-      },
-      student: {
-        id: enrollment.student.id,
-        code: enrollment.student.code,
-        name: enrollment.student.full_name,
-        guardianName: enrollment.student.guardian_name,
-      },
-      group: {
-        id: enrollment.group.id,
-        name: enrollment.group.name,
-        code: enrollment.group.code,
-      },
-      summary: {
-        totalSessions: sessions.length,
-        sessionsWithAcademicFollowUp: sessions.filter((session) => session.academic_follow_ups.length > 0).length,
-        academicFollowUps: academicEntries.length,
-        attendanceRecords: sessions.length - attendanceCounts.UNRECORDED,
-        attendanceRate:
-          sessions.length - attendanceCounts.UNRECORDED > 0
-            ? Math.round(
-                ((attendanceCounts.PRESENT + attendanceCounts.LATE) /
-                  (sessions.length - attendanceCounts.UNRECORDED)) *
-                  100,
-              )
-            : null,
-        averageScorePercentage,
-        progressLevel,
-        attendance: attendanceCounts,
-        results: resultCounts,
-        mainDifficulties: [...difficultyCounts.entries()]
-          .map(([label, count]) => ({ label, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5),
-      },
-      sessions: sessions.map((session) => {
-        const attendance = session.attendance_records[0] || null;
-        return {
-          id: session.id,
-          title: session.title,
-          date: session.session_date,
-          status: session.status,
-          attendance: attendance
-            ? {
-                status: attendance.status,
-                minutesLate: attendance.minutes_late,
-                leftEarlyMinutes: attendance.left_early_minutes,
-                notes: attendance.notes,
-                guardianContactStatus: attendance.contacts[0]?.status || null,
-              }
-            : null,
-          academicFollowUps: session.academic_follow_ups.map(formatFollowUp),
-        };
-      }),
-      unlinkedAcademicFollowUps: unlinkedFollowUps.map(formatFollowUp),
-    };
-  }
-
   async createAcademicFollowUp(dto: CreateAcademicFollowUpDto, user: any) {
     let groupId = dto.groupId;
-    let sessionId = dto.sessionId;
+    const sessionId = dto.sessionId;
+    let session: LessonRef | null = null;
     if (sessionId) {
-      const session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
+      session = await this.prisma.teachingSession.findUnique({ where: { id: sessionId } });
       if (!session) throw new NotFoundException('Teaching session not found');
       groupId = session.group_id;
     }
@@ -1289,15 +1069,19 @@ export class TeachingService {
       throw new BadRequestException('Group is required when no session is selected');
     }
 
-    await this.ensureGroupAccess(user, groupId, AssistantResponsibility.ACADEMIC_FOLLOW_UP);
-    await this.ensureStudentInGroup(dto.studentId, groupId);
     await this.ensureStudentAccess(user, dto.studentId, groupId, AssistantResponsibility.ACADEMIC_FOLLOW_UP);
+    if (session?.status === TeachingSessionStatus.CANCELLED) throw new BadRequestException('Teaching session is cancelled');
+    const enrollment = session
+      ? (await this.lessonRoster(session, [dto.studentId])).get(dto.studentId)
+      : await this.ensureStudentInGroup(dto.studentId, groupId);
+    if (!enrollment) throw new BadRequestException('Student is not on the roster for this lesson');
 
     const entry = await this.prisma.academicFollowUpEntry.create({
       data: {
         session_id: sessionId || null,
         student_id: dto.studentId,
         group_id: groupId,
+        enrollment_id: enrollment.id,
         assistant_id: user?.id,
         entry_date: new Date(dto.entryDate),
         activity_type: dto.activityType,

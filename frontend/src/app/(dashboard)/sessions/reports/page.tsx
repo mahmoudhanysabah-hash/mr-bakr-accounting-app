@@ -1,540 +1,260 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
-import {
-  ArrowRight,
-  BookOpenCheck,
-  CalendarDays,
-  FileText,
-  Printer,
-  RefreshCw,
-  Search,
-} from 'lucide-react';
+import { ArrowRight, FileText, Printer, Search } from 'lucide-react';
 import api from '@/lib/axios';
 import { extractAuthUser } from '@/lib/auth';
 import { getApiErrorMessage } from '@/lib/error';
+import {
+  activityLabels, attendanceLabels, attendanceText, AttendanceStatus, cairoDateText, Classwork,
+  FollowUp, Grade, gradeText, numberText, SavedAward, unwrapData,
+} from '@/components/teaching/lesson-shared';
 
-type Role = 'ADMIN' | 'ACCOUNTANT' | 'FINANCE_MANAGER' | 'ASSISTANT';
-
-type Group = {
-  id: string;
-  name: string;
-  code: string;
-};
-
-type StudentOption = {
-  id: string;
-  code: string;
-  full_name: string;
-};
-
-type AcademicFollowUp = {
-  id: string;
-  entryDate: string;
-  activityType: string;
-  score: number | null;
-  maxScore: number | null;
-  questionType: string | null;
-  errorType: string | null;
-  errorReason: string | null;
-  correction: string | null;
-  assistantAction: string | null;
-  result: string;
-  notes: string | null;
-};
-
-type StudentAcademicReport = {
-  filters: {
-    studentId: string;
-    groupId: string;
-    year: number;
-    month: number;
-    startDate: string;
-    endDate: string;
-  };
-  student: {
-    id: string;
-    code: string;
-    name: string;
-    guardianName: string | null;
-  };
-  group: {
-    id: string;
-    name: string;
-    code: string;
-  };
+type Group = { id: string; name: string; code: string; active?: boolean };
+type Report = {
+  student: { id: string; code: string; name: string };
+  group: Group;
   summary: {
-    totalSessions: number;
-    sessionsWithAcademicFollowUp: number;
-    academicFollowUps: number;
-    attendanceRecords: number;
-    attendanceRate: number | null;
-    averageScorePercentage: number | null;
-    progressLevel: string;
-    attendance: Record<string, number>;
-    results: Record<string, number>;
-    mainDifficulties: Array<{ label: string; count: number }>;
+    totalSessions: number; attendanceRate: number | null; averageScorePercentage: number | null; progressLevel: string;
+    attendance: Record<AttendanceStatus | 'UNRECORDED', number>;
+    mainDifficulties: { label: string; count: number }[];
+    pointsEarned: number; pointsBalance: number;
   };
-  sessions: Array<{
-    id: string;
-    title: string | null;
-    date: string;
-    status: string;
-    attendance: {
-      status: string;
-      minutesLate: number | null;
-      leftEarlyMinutes: number | null;
-      notes: string | null;
-      guardianContactStatus: string | null;
-    } | null;
-    academicFollowUps: AcademicFollowUp[];
-  }>;
-  unlinkedAcademicFollowUps: AcademicFollowUp[];
+  pointsByEnrollment: { enrollmentId: string; startsAt: string; lastLessonDate: string | null; pointsEarned: number; pointsBalance: number }[];
+  sessions: {
+    id: string; date: string; title: string | null; attendance: { status: AttendanceStatus; notes: string | null; recordedBy: string | null } | null;
+    homework: Grade; classwork: Classwork; pointsEarned: number; awards: SavedAward[]; academicFollowUps: FollowUp[];
+  }[];
+  unlinkedAcademicFollowUps: FollowUp[];
 };
+type MonthlyGroup = { group: Group; filters: { year: number; month: number }; reports: Report[] };
 
-function unwrapData<T>(payload: T | { data: T }): T {
-  return 'data' in Object(payload) ? (payload as { data: T }).data : (payload as T);
+const progress: Record<string, string> = {
+  STRONG: 'مستوى قوي', GOOD: 'مستوى جيد', NEEDS_SUPPORT: 'يحتاج متابعة', AT_RISK: 'يحتاج خطة علاجية', NO_DATA: 'بيانات غير كافية',
+};
+const resultLabels: Record<string, string> = { IMPROVED: 'تحسّن', NOT_IMPROVED: 'لم يتحسّن', NEEDS_MORE_WORK: 'يحتاج شغل أكتر' };
+const monthName = (year: number, month: number) => new Intl.DateTimeFormat('ar-EG', {
+  year: 'numeric', month: 'long', timeZone: 'Africa/Cairo',
+}).format(new Date(Date.UTC(year, month - 1, 1, 12)));
+const percent = (value: number | null) => value == null ? '—' : numberText(value) + '٪';
+const field = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-emerald-600 disabled:bg-slate-100';
+
+function FollowUps({ entries }: { entries: FollowUp[] }) {
+  if (!entries.length) return null;
+  return (
+    <ul className="mt-2 space-y-2">
+      {entries.map((entry) => (
+        <li key={entry.id} className="break-words rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-800 print:break-inside-avoid">
+          <p className="font-bold">{activityLabels[entry.activityType] ?? 'متابعة'}{entry.sheetSlot ? '' : ' · سجل سابق'}{entry.assistantName && <> · {entry.assistantName}</>}{entry.score != null && <> · <bdi dir="ltr">{gradeText(entry)}</bdi></>}</p>
+          {entry.notes && <p className="whitespace-pre-wrap">تعليق: {entry.notes}</p>}
+          {entry.questionType && <p>نوع السؤال: {entry.questionType}</p>}
+          {entry.errorType && <p className="whitespace-pre-wrap">الغلطات: {entry.errorType}</p>}
+          {entry.errorReason && <p>السبب: {entry.errorReason}</p>}
+          {entry.correction && <p>التصحيح: {entry.correction}</p>}
+          {entry.assistantAction && <p>إجراء الأسيستنت: {entry.assistantAction}</p>}
+          {resultLabels[entry.result] && <p>النتيجة: {resultLabels[entry.result]}</p>}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-function getErrorMessage(error: unknown, fallback: string) {
-  return getApiErrorMessage(error, fallback);
-}
-
-function activityLabel(value: string) {
-  return {
-    HOMEWORK: 'واجب',
-    CLASSWORK: 'تطبيق داخل الحصة',
-    QUIZ: 'اختبار قصير',
-    EXAM: 'امتحان',
-    OTHER: 'متابعة أخرى',
-  }[value] || 'متابعة';
-}
-
-function resultLabel(value: string) {
-  return {
-    IMPROVED: 'تحسن',
-    NOT_IMPROVED: 'لم يتحسن',
-    NEEDS_MORE_WORK: 'يحتاج شغل أكثر',
-    NOT_ASSESSED: 'لم يتم التقييم',
-  }[value] || value;
-}
-
-function attendanceLabel(value?: string | null) {
-  return {
-    PRESENT: 'حاضر',
-    ABSENT: 'غائب',
-    LATE: 'متأخر',
-    LEFT_EARLY: 'خرج بدري',
-    EXCUSED: 'غياب بعذر',
-  }[value || ''] || 'غير مسجل';
-}
-
-function progressMeta(value: string) {
-  return {
-    STRONG: { label: 'مستوى قوي', tone: 'border-emerald-100 bg-emerald-50 text-emerald-700' },
-    GOOD: { label: 'مستوى جيد', tone: 'border-blue-100 bg-blue-50 text-blue-700' },
-    NEEDS_SUPPORT: { label: 'يحتاج متابعة', tone: 'border-amber-100 bg-amber-50 text-amber-700' },
-    AT_RISK: { label: 'يحتاج خطة علاجية', tone: 'border-red-100 bg-red-50 text-red-700' },
-    NO_DATA: { label: 'بيانات غير كافية', tone: 'border-slate-200 bg-slate-100 text-slate-600' },
-  }[value] || { label: value, tone: 'border-slate-200 bg-slate-100 text-slate-600' };
-}
-
-function statusTone(value?: string | null) {
-  if (value === 'PRESENT') return 'border-emerald-100 bg-emerald-50 text-emerald-700';
-  if (value === 'LATE') return 'border-amber-100 bg-amber-50 text-amber-700';
-  if (value === 'ABSENT' || value === 'EXCUSED') return 'border-red-100 bg-red-50 text-red-700';
-  return 'border-slate-200 bg-slate-100 text-slate-600';
+function StudentReport({ report, month }: { report: Report; month: string }) {
+  const { summary } = report;
+  const counters = [
+    ['المستوى', progress[summary.progressLevel]], ['متوسط الدرجات', percent(summary.averageScorePercentage)],
+    ['نسبة الحضور المسجّل', percent(summary.attendanceRate)], ['درجات فاشل في الشهر', numberText(summary.pointsEarned)],
+    ['رصيد الكورس لآخر الشهر', numberText(summary.pointsBalance)],
+  ];
+  return (
+    <article className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 print:border-0 print:p-0">
+      <header>
+        <h2 className="text-xl font-black text-slate-900">التقرير الشهري لـ<bdi>{report.student.name}</bdi></h2>
+        <p className="mt-1 text-sm font-bold text-slate-600"><bdi>{report.group.name}</bdi> · {month} · كود الطالب <bdi>{report.student.code}</bdi></p>
+      </header>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5 print:grid-cols-5">
+        {counters.map(([label, value]) => <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <p className="text-xs font-bold text-slate-600">{label}</p><p className="mt-1 font-black text-slate-900">{value}</p>
+        </div>)}
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs font-bold text-slate-700">
+        <span className="rounded-full bg-slate-100 px-3 py-1">{numberText(summary.totalSessions)} حصة</span>
+        {[...Object.entries(attendanceLabels), ['UNRECORDED', 'لم يُسجَّل']].map(([key, label]) => (
+          <span key={key} className="rounded-full bg-slate-100 px-3 py-1">{label}: {numberText(summary.attendance[key as keyof typeof summary.attendance] ?? 0)}</span>
+        ))}
+      </div>
+      {summary.mainDifficulties.length > 0 && <p className="break-words text-sm font-semibold text-slate-700">
+        <strong>أبرز الغلطات:</strong> {summary.mainDifficulties.map(({ label, count }) => label + ' (' + numberText(count) + ')').join('، ')}.
+      </p>}
+      {(report.pointsByEnrollment.length > 1 || report.pointsByEnrollment.some((entry) => entry.lastLessonDate)) && (
+        <ul className="space-y-1 rounded-xl border border-slate-100 p-3 text-sm text-slate-700">
+          {report.pointsByEnrollment.map((entry) => <li key={entry.enrollmentId}>
+            اشتراك من {cairoDateText(entry.startsAt)}{entry.lastLessonDate && <> لحد حصة {cairoDateText(entry.lastLessonDate)}</>} · في الشهر: {numberText(entry.pointsEarned)} · الرصيد: {numberText(entry.pointsBalance)}
+          </li>)}
+        </ul>
+      )}
+      <section className="space-y-3">
+        <h3 className="text-base font-black text-slate-900">تفاصيل الحصص</h3>
+        {!report.sessions.length && <p className="text-sm font-semibold text-slate-500">مفيش حصص ضمن اشتراك الطالب في الشهر ده.</p>}
+        {report.sessions.map((session) => (
+          <div key={session.id} className="rounded-xl border border-slate-200 p-3 print:break-inside-avoid">
+            <h4 className="font-black text-slate-900">{session.title || 'حصة'} · {cairoDateText(session.date)}</h4>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm font-semibold text-slate-700">
+              <span>الحضور: <strong>{attendanceText(session.attendance?.status)}</strong></span>
+              <span>الواجب: <strong><bdi dir="ltr">{gradeText(session.homework)}</bdi></strong></span>
+              <span>الكلاس ورك: <strong><bdi dir={session.classwork.score == null ? 'auto' : 'ltr'}>{gradeText(session.classwork)}</bdi></strong></span>
+              <span>درجات فاشل: <strong>{numberText(session.pointsEarned)}</strong></span>
+            </div>
+            {session.attendance?.notes && <p className="mt-2 break-words text-sm text-slate-700">تعليق الحضور: {session.attendance.notes}{session.attendance.recordedBy && <> · {session.attendance.recordedBy}</>}</p>}
+            {session.awards.length > 0 && <ul className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-emerald-800">
+              {session.awards.map((award) => <li key={award.id} className="rounded-full bg-emerald-50 px-2 py-1">{numberText(award.amount)} · {activityLabels[award.source]}{award.recordedBy && <> · {award.recordedBy}</>}</li>)}
+            </ul>}
+            <FollowUps entries={session.academicFollowUps.filter((entry) => !entry.sheetSlot || entry.notes || entry.errorType)} />
+          </div>
+        ))}
+      </section>
+      {report.unlinkedAcademicFollowUps.length > 0 && <section>
+        <h3 className="text-base font-black">متابعات خارج الحصص</h3>
+        <FollowUps entries={report.unlinkedAcademicFollowUps} />
+      </section>}
+    </article>
+  );
 }
 
 export default function StudentAcademicReportsPage() {
-  const now = new Date();
-  const [role, setRole] = useState<Role | ''>('');
   const [groups, setGroups] = useState<Group[]>([]);
-  const [students, setStudents] = useState<StudentOption[]>([]);
   const [groupId, setGroupId] = useState('');
+  const cairoParts = new Intl.DateTimeFormat('en', { timeZone: 'Africa/Cairo', year: 'numeric', month: 'numeric' }).formatToParts(new Date());
+  const [year, setYear] = useState(cairoParts.find((part) => part.type === 'year')?.value ?? '');
+  const [month, setMonth] = useState(cairoParts.find((part) => part.type === 'month')?.value ?? '');
   const [studentId, setStudentId] = useState('');
-  const [year, setYear] = useState(String(now.getFullYear()));
-  const [month, setMonth] = useState(String(now.getMonth() + 1));
-  const [report, setReport] = useState<StudentAcademicReport | null>(null);
+  const [groupReport, setGroupReport] = useState<MonthlyGroup | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingStudents, setLoadingStudents] = useState(false);
-  const [loadingReport, setLoadingReport] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
-
-  const isManager = role === 'ADMIN' || role === 'FINANCE_MANAGER';
-  const progress = report ? progressMeta(report.summary.progressLevel) : null;
-
-  const loadStudents = async (currentRole: Role, currentGroupId: string) => {
-    if (!currentGroupId) {
-      setStudents([]);
-      setStudentId('');
-      return;
-    }
-
-    setLoadingStudents(true);
-    setError('');
-    try {
-      if (currentRole === 'ASSISTANT') {
-        const response = await api.get('/teaching/assistant-students', {
-          params: { groupId: currentGroupId },
-        });
-        const assignments = unwrapData<Array<{ student: StudentOption; status?: string }>>(response.data).filter((assignment) => assignment.status === 'ACTIVE');
-        const uniqueStudents = Array.from(
-          new Map(assignments.map((assignment) => [assignment.student.id, assignment.student])).values(),
-        );
-        setStudents(uniqueStudents);
-        setStudentId((current) => current || uniqueStudents[0]?.id || '');
-      } else {
-        const response = await api.get('/accounting/students', {
-          params: { status: 'ACTIVE', groupId: currentGroupId },
-        });
-        const loadedStudents = unwrapData<StudentOption[]>(response.data);
-        setStudents(loadedStudents);
-        setStudentId((current) => current || loadedStudents[0]?.id || '');
-      }
-      setReport(null);
-    } catch (err) {
-      setError(getErrorMessage(err, 'تعذر تحميل طلاب الجروب'));
-      setStudents([]);
-      setStudentId('');
-    } finally {
-      setLoadingStudents(false);
-    }
-  };
+  const selected = groupReport?.reports.find((report) => report.student.id === studentId);
+  const label = groupReport ? monthName(groupReport.filters.year, groupReport.filters.month) : '';
 
   useEffect(() => {
-    let cancelled = false;
-
+    const controller = new AbortController();
     const loadPage = async () => {
       try {
-        const userResponse = await api.get('/auth/me');
-        const user = extractAuthUser(userResponse.data);
-        if (!user) throw new Error('Unauthorized role');
-
+        const response = await api.get('/auth/me', { signal: controller.signal });
+        const user = extractAuthUser(response.data);
         let loadedGroups: Group[] = [];
-        if (user.role === 'ASSISTANT') {
-          const assignmentsResponse = await api.get('/teaching/assistant-groups');
-          const assignments = unwrapData<Array<{ group: Group; status?: string }>>(assignmentsResponse.data).filter((assignment) => assignment.status === 'ACTIVE');
-          loadedGroups = Array.from(
-            new Map(assignments.map((assignment) => [assignment.group.id, assignment.group])).values(),
-          );
-        } else if (user.role === 'ADMIN' || user.role === 'FINANCE_MANAGER') {
-          const groupsResponse = await api.get('/accounting/groups', { params: { active: true } });
-          loadedGroups = unwrapData<Group[]>(groupsResponse.data);
+        if (user?.role === 'ASSISTANT') {
+          const assignments = await api.get('/teaching/assistant-groups', { signal: controller.signal });
+          const academicGroups = unwrapData<{ group: Group; status: string; responsibility: string }[]>(assignments.data)
+            .filter((entry) => entry.status === 'ACTIVE' && ['ACADEMIC_FOLLOW_UP', 'FULL'].includes(entry.responsibility));
+          loadedGroups = [...new Map(academicGroups.map((entry) => [entry.group.id, entry.group])).values()];
+        } else if (user?.role === 'ADMIN' || user?.role === 'FINANCE_MANAGER') {
+          const groupsResponse = await api.get('/accounting/groups', { signal: controller.signal });
+          loadedGroups = unwrapData<Group[]>(groupsResponse.data).sort((a, b) => Number(b.active !== false) - Number(a.active !== false));
         }
-
-        if (!cancelled) {
-          setRole(user.role);
+        if (!controller.signal.aborted) {
           setGroups(loadedGroups);
-          setGroupId((current) => current || loadedGroups[0]?.id || '');
+          setGroupId(loadedGroups[0]?.id ?? '');
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(getErrorMessage(err, 'تعذر تحميل بيانات التقرير'));
-        }
+        if (!controller.signal.aborted) setError(getApiErrorMessage(err, 'تعذّر تحميل المجموعات.'));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
-
     void loadPage();
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    if (role && groupId) {
-      setStudentId('');
-      void loadStudents(role, groupId);
-    }
-  }, [role, groupId]);
-
-  const loadReport = async () => {
-    if (!studentId || !groupId || !year || !month) return;
-    setLoadingReport(true);
-    setError('');
+  const clear = () => { setGroupReport(null); setStudentId(''); setError(''); };
+  const loadReport = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!groupId || !year || !month || generating) return;
+    clear();
+    setGenerating(true);
     try {
-      const response = await api.get('/teaching/reports/student-academic', {
-        params: {
-          studentId,
-          groupId,
-          year: Number(year),
-          month: Number(month),
-        },
-      });
-      setReport(unwrapData<StudentAcademicReport>(response.data));
-    } catch (err) {
-      setReport(null);
-      setError(getErrorMessage(err, 'تعذر تحميل التقرير الشهري'));
-    } finally {
-      setLoadingReport(false);
-    }
+      const response = await api.get('/teaching/reports/group-academic', { params: { groupId, year: Number(year), month: Number(month) } });
+      setGroupReport(unwrapData<MonthlyGroup>(response.data));
+    } catch (err) { setError(getApiErrorMessage(err, 'تعذّر تحميل التقارير الشهرية.')); }
+    finally { setGenerating(false); }
   };
 
-  const monthLabel = useMemo(
-    () => new Date(Number(year), Number(month) - 1, 1).toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' }),
-    [month, year],
-  );
-
-  if (loading) {
-    return (
-      <div className="rounded-2xl border border-slate-100 bg-white p-12 text-center font-cairo text-sm font-bold text-slate-500" dir="rtl">
-        جاري تحميل تقرير الطالب...
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6 font-cairo" dir="rtl">
-      <div className="flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-6 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+    <div dir="rtl" className="min-w-0 space-y-5 font-cairo">
+      <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 print:hidden">
         <div>
-          <Link href="/sessions" className="mb-3 inline-flex items-center gap-2 text-sm font-bold text-emerald-700 hover:text-emerald-800">
-            <ArrowRight className="h-4 w-4" />
-            العودة إلى تشغيل الحصص
-          </Link>
-          <h1 className="flex items-center gap-2 text-2xl font-black text-slate-900">
-            <FileText className="h-7 w-7 text-blue-600" />
-            التقرير الشهري لكل طالب
-          </h1>
-          <p className="mt-1 text-sm font-semibold text-slate-500">
-            تقرير خاص يوضح مستوى الطالب جلسة بجلسة خلال الشهر المحدد.
-          </p>
+          <h1 className="flex items-center gap-2 text-2xl font-black text-slate-900"><FileText className="size-6 text-blue-700" /> تقارير الطلاب الشهرية</h1>
+          <p className="mt-1 text-sm font-semibold text-slate-600">اختار الجروب والشهر عشان تشوف مستوى كل طالب ودرجاته وملاحظات الأسيستنت.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          disabled={!report}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-        >
-          <Printer className="h-4 w-4" />
-          طباعة التقرير
-        </button>
-      </div>
-
-      {error && <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm font-bold text-red-700">{error}</div>}
-
-      <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-center gap-2">
-          <Search className="h-5 w-5 text-blue-600" />
-          <h2 className="text-lg font-black text-slate-900">اختيار الطالب والشهر</h2>
-        </div>
-        <div className="grid gap-3 md:grid-cols-4">
-          <label className="space-y-2 text-sm font-bold text-slate-700">
-            <span>الجروب</span>
-            <select
-              value={groupId}
-              onChange={(event) => setGroupId(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-            >
-              {groups.map((group) => (
-                <option key={group.id} value={group.id}>{group.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-2 text-sm font-bold text-slate-700">
-            <span>الطالب</span>
-            <select
-              value={studentId}
-              onChange={(event) => setStudentId(event.target.value)}
-              disabled={loadingStudents || students.length === 0}
-              className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500 disabled:bg-slate-50"
-            >
-              {students.length === 0 ? <option value="">لا يوجد طلاب مسندون</option> : null}
-              {students.map((student) => (
-                <option key={student.id} value={student.id}>{student.full_name} ({student.code})</option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-2 text-sm font-bold text-slate-700">
-            <span>السنة</span>
-            <input
-              type="number"
-              min="2000"
-              max="2100"
-              value={year}
-              onChange={(event) => setYear(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-            />
-          </label>
-          <label className="space-y-2 text-sm font-bold text-slate-700">
-            <span>الشهر</span>
-            <select
-              value={month}
-              onChange={(event) => setMonth(event.target.value)}
-              className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-            >
-              {Array.from({ length: 12 }, (_, index) => (
-                <option key={index + 1} value={index + 1}>
-                  {new Date(2020, index, 1).toLocaleDateString('ar-EG', { month: 'long' })}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <button
-          type="button"
-          onClick={() => void loadReport()}
-          disabled={loadingReport || loadingStudents || !studentId || !groupId}
-          className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:opacity-60"
-        >
-          {loadingReport ? <RefreshCw className="h-4 w-4 animate-spin" /> : <BookOpenCheck className="h-4 w-4" />}
-          عرض تقرير {monthLabel}
-        </button>
-      </section>
-
-      {!report ? (
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center text-sm font-bold text-slate-500">
-          اختر الطالب والشهر ثم اضغط عرض التقرير.
-        </div>
+        <Link href="/sessions" className="inline-flex items-center gap-2 text-sm font-bold text-blue-800 hover:underline"><ArrowRight className="size-4" /> تشغيل الحصص</Link>
+      </header>
+      {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 print:hidden">{error}</p>}
+      {loading ? <p className="p-5 text-sm font-bold text-slate-600">جاري تحميل المجموعات…</p> : !groups.length ? (
+        <p className="rounded-xl bg-white p-4 text-sm font-bold text-slate-600">مفيش مجموعات متاحة لك للمتابعة الدراسية.</p>
       ) : (
-        <div className="space-y-6 print:space-y-3">
-          <section className="rounded-2xl border border-blue-100 bg-blue-50/50 p-5">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-2xl font-black text-slate-900">{report.student.name}</h2>
-                <p className="mt-1 text-sm font-bold text-slate-600">
-                  {report.student.code} | {report.group.name} | {monthLabel}
-                </p>
-              </div>
-              {progress && <span className={'rounded-full border px-4 py-2 text-sm font-black ' + progress.tone}>{progress.label}</span>}
-            </div>
-          </section>
-
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">عدد الجلسات</div>
-              <div className="mt-2 text-2xl font-black text-slate-900">{report.summary.totalSessions}</div>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">نسبة الحضور</div>
-              <div className="mt-2 text-2xl font-black text-emerald-700">{report.summary.attendanceRate == null ? '-' : report.summary.attendanceRate + '%'}</div>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">متوسط الدرجات</div>
-              <div className="mt-2 text-2xl font-black text-blue-700">{report.summary.averageScorePercentage == null ? '-' : report.summary.averageScorePercentage + '%'}</div>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">عدد المتابعات</div>
-              <div className="mt-2 text-2xl font-black text-slate-900">{report.summary.academicFollowUps}</div>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="text-xs font-bold text-slate-500">تحتاج متابعة</div>
-              <div className="mt-2 text-2xl font-black text-amber-700">
-                {(report.summary.results.NOT_IMPROVED || 0) + (report.summary.results.NEEDS_MORE_WORK || 0)}
-              </div>
-            </div>
-          </section>
-
-          <section className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
-            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 flex items-center gap-2 text-lg font-black text-slate-900">
-                <CalendarDays className="h-5 w-5 text-emerald-600" />
-                ملخص الحضور
-              </h3>
-              <div className="grid grid-cols-2 gap-3 text-sm font-bold">
-                {[
-                  ['حاضر', report.summary.attendance.PRESENT, 'text-emerald-700'],
-                  ['غائب', report.summary.attendance.ABSENT, 'text-red-700'],
-                  ['متأخر', report.summary.attendance.LATE, 'text-amber-700'],
-                  ['بعذر', report.summary.attendance.EXCUSED, 'text-slate-700'],
-                ].map(([label, value, tone]) => (
-                  <div key={label} className="rounded-xl bg-slate-50 p-3">
-                    <div className="text-slate-500">{label}</div>
-                    <div className={'mt-1 text-xl font-black ' + tone}>{value}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 text-lg font-black text-slate-900">أهم نقاط الصعوبة</h3>
-              {report.summary.mainDifficulties.length === 0 ? (
-                <p className="text-sm font-bold text-slate-500">لم يتم تسجيل أخطاء متكررة في هذا الشهر.</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {report.summary.mainDifficulties.map((item) => (
-                    <span key={item.label} className="rounded-full border border-amber-100 bg-amber-50 px-3 py-2 text-sm font-black text-amber-800">
-                      {item.label} ({item.count})
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-5 flex items-center gap-2 text-lg font-black text-slate-900">
-              <BookOpenCheck className="h-5 w-5 text-blue-600" />
-              مستوى الطالب جلسة بجلسة
-            </h3>
-            <div className="space-y-4">
-              {report.sessions.length === 0 ? (
-                <p className="rounded-xl bg-slate-50 p-5 text-sm font-bold text-slate-500">لا توجد جلسات لهذا الطالب في الشهر المحدد.</p>
-              ) : (
-                report.sessions.map((session, index) => (
-                  <article key={session.id} className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="font-black text-slate-900">الجلسة {index + 1}: {session.title || report.group.name}</div>
-                        <div className="mt-1 text-xs font-bold text-slate-500">
-                          {new Date(session.date).toLocaleDateString('ar-EG')}
-                        </div>
-                      </div>
-                      <span className={'inline-flex w-fit rounded-full border px-3 py-1 text-xs font-black ' + statusTone(session.attendance?.status)}>
-                        {attendanceLabel(session.attendance?.status)}
-                      </span>
-                    </div>
-
-                    {session.attendance?.notes && (
-                      <p className="mt-3 rounded-lg bg-white p-3 text-xs font-semibold text-slate-600">ملاحظة الحضور: {session.attendance.notes}</p>
-                    )}
-
-                    {session.academicFollowUps.length === 0 ? (
-                      <p className="mt-3 text-sm font-bold text-slate-500">لم يتم تسجيل متابعة أكاديمية في هذه الجلسة.</p>
-                    ) : (
-                      <div className="mt-3 space-y-3">
-                        {session.academicFollowUps.map((entry) => (
-                          <div key={entry.id} className="rounded-lg border border-blue-100 bg-white p-3">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                              <div className="text-sm font-black text-slate-800">
-                                {activityLabel(entry.activityType)}
-                                {entry.score != null && entry.maxScore != null ? ' | الدرجة: ' + entry.score + ' / ' + entry.maxScore : ''}
-                              </div>
-                              <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">{resultLabel(entry.result)}</span>
-                            </div>
-                            <div className="mt-3 grid gap-2 text-xs font-semibold text-slate-600 sm:grid-cols-2">
-                              {entry.questionType && <div>نوع السؤال: {entry.questionType}</div>}
-                              {entry.errorType && <div>نوع الخطأ: {entry.errorType}</div>}
-                              {entry.errorReason && <div>سبب الخطأ: {entry.errorReason}</div>}
-                              {entry.correction && <div>التصحيح: {entry.correction}</div>}
-                              {entry.assistantAction && <div>إجراء المساعد: {entry.assistantAction}</div>}
-                              {entry.notes && <div>ملاحظات: {entry.notes}</div>}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                ))
-              )}
-            </div>
-
-            {report.unlinkedAcademicFollowUps.length > 0 && (
-              <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50/50 p-4">
-                <h4 className="font-black text-amber-900">متابعات مسجلة خارج حصة محددة</h4>
-                <div className="mt-3 space-y-2 text-sm font-semibold text-amber-900">
-                  {report.unlinkedAcademicFollowUps.map((entry) => (
-                    <div key={entry.id}>
-                      {new Date(entry.entryDate).toLocaleDateString('ar-EG')} | {activityLabel(entry.activityType)} | {resultLabel(entry.result)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
+        <form onSubmit={loadReport} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4 lg:items-end print:hidden">
+          <label className="block space-y-1 text-sm font-bold">الجروب
+            <select value={groupId} className={field} disabled={generating} onChange={(event) => { clear(); setGroupId(event.target.value); }}>
+              {groups.map((group) => <option value={group.id} key={group.id}>{group.name}{group.active === false ? ' · غير نشط' : ''}</option>)}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm font-bold">الشهر
+            <select value={month} className={field} disabled={generating} onChange={(event) => { clear(); setMonth(event.target.value); }}>
+              {Array.from({ length: 12 }, (_, index) => <option value={index + 1} key={index}>
+                {new Date(Date.UTC(2026, index, 1, 12)).toLocaleDateString('ar-EG', { month: 'long', timeZone: 'Africa/Cairo' })}
+              </option>)}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm font-bold">السنة
+            <input required type="number" min={2000} max={2100} value={year} className={field} disabled={generating}
+              onChange={(event) => { clear(); setYear(event.target.value); }} />
+          </label>
+          <button type="submit" disabled={generating || !groupId} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-3 py-2.5 text-sm font-black text-white hover:bg-blue-800 disabled:opacity-50">
+            <Search className="size-4" /> {generating ? 'جاري تجهيز التقارير…' : 'عرض تقارير الشهر'}
+          </button>
+        </form>
       )}
+      {groupReport && (groupReport.reports.length ? <>
+        <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 print:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black"><bdi>{groupReport.group.name}</bdi> · {label}</h2>
+              <p className="text-sm font-semibold text-slate-600">{numberText(groupReport.reports.length)} طالب في التقرير</p>
+            </div>
+            <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 px-3 py-2 text-sm font-bold text-blue-800 hover:bg-blue-50">
+              <Printer className="size-4" /> {selected ? 'طباعة تقرير الطالب' : 'طباعة كل تقارير الجروب'}
+            </button>
+          </div>
+          <label className="block max-w-md space-y-1 text-sm font-bold">عرض التقارير
+            <select className={field} value={studentId} onChange={(event) => setStudentId(event.target.value)}>
+              <option value="">كل طلاب الجروب</option>
+              {groupReport.reports.map(({ student }) => <option key={student.id} value={student.id}>{student.name} · {student.code}</option>)}
+            </select>
+          </label>
+          {!selected && <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[650px] text-right text-sm">
+              <thead className="bg-slate-50 text-slate-600"><tr>{['الطالب', 'الحضور', 'متوسط الدرجات', 'المستوى', 'درجات فاشل في الشهر', 'رصيد الكورس'].map((heading) => <th key={heading} scope="col" className="p-3">{heading}</th>)}</tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {groupReport.reports.map(({ student, summary }) => <tr key={student.id} className="hover:bg-slate-50">
+                  <th scope="row" className="p-3"><button type="button" onClick={() => setStudentId(student.id)} className="font-bold text-blue-800 hover:underline"><bdi>{student.name}</bdi></button></th>
+                  <td className="p-3">{percent(summary.attendanceRate)}</td>
+                  <td className="p-3">{percent(summary.averageScorePercentage)}</td>
+                  <td className="p-3">{progress[summary.progressLevel]}</td>
+                  <td className="p-3">{numberText(summary.pointsEarned)}</td>
+                  <td className="p-3">{numberText(summary.pointsBalance)}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>}
+        </section>
+        {selected ? <StudentReport report={selected} month={label} /> : (
+          <div className="hidden print:block">
+            {groupReport.reports.map((report, index) => <div key={report.student.id} className={index > 0 ? 'print:break-before-page' : ''}>
+              <StudentReport report={report} month={label} />
+            </div>)}
+          </div>
+        )}
+      </> : <p className="rounded-xl bg-white p-4 text-sm font-bold text-slate-600">مفيش طلبة متاحين لك في الجروب خلال الشهر ده.</p>)}
     </div>
   );
 }

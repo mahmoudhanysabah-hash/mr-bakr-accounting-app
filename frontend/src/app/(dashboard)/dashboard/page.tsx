@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import api from '@/lib/axios';
+import { useDashboardUser } from '@/lib/dashboard-user';
+import TodayLessonSchedule from '@/components/teaching/today-lesson-schedule';
 import { 
   TrendingUp, 
   Users, 
@@ -24,6 +26,7 @@ import {
 } from 'recharts';
 
 export default function AccountingDashboard() {
+  const user = useDashboardUser();
   const [studentsCount, setStudentsCount] = useState(0);
   const [groupsCount, setGroupsCount] = useState(0);
   const [periods, setPeriods] = useState<any[]>([]);
@@ -240,6 +243,7 @@ export default function AccountingDashboard() {
         </div>
 
       </div>
+      {(user?.role === 'ADMIN' || user?.role === 'FINANCE_MANAGER') && <TodayLessonSchedule />}
     </div>
   );
 }

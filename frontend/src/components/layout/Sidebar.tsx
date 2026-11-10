@@ -21,9 +21,10 @@ import {
 
 type SidebarProps = {
   userRole: AccountingRole;
+  compactOnSmallScreens?: boolean;
 };
 
-export default function Sidebar({ userRole }: SidebarProps) {
+export default function Sidebar({ userRole, compactOnSmallScreens = false }: SidebarProps) {
   const pathname = usePathname();
 
   const links = userRole === 'ASSISTANT'
@@ -53,19 +54,19 @@ export default function Sidebar({ userRole }: SidebarProps) {
   };
 
   return (
-    <div className="flex h-screen w-64 shrink-0 flex-col border-l border-slate-800 bg-slate-900 text-white" dir="rtl">
-      <div className="flex items-center gap-3 border-b border-slate-800 p-6">
+    <div className={`flex h-screen shrink-0 flex-col border-l border-slate-800 bg-slate-900 text-white print:hidden ${compactOnSmallScreens ? 'w-14 xl:w-64' : 'w-64'}`} dir="rtl">
+      <div className={`flex items-center gap-3 border-b border-slate-800 ${compactOnSmallScreens ? 'justify-center p-2 xl:justify-start xl:p-6' : 'p-6'}`}>
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 text-xl font-black text-white shadow-md shadow-emerald-500/20">
           ح
         </div>
-        <div>
+        <div className={compactOnSmallScreens ? 'hidden xl:block' : ''}>
           <h1 className="font-cairo text-lg font-bold tracking-tight">نظام الحسابات</h1>
           <p className="text-xs text-slate-400">مستر بكر</p>
         </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-6">
-        <ul className="space-y-1.5 px-3">
+        <ul className={`space-y-1.5 ${compactOnSmallScreens ? 'px-1.5 xl:px-3' : 'px-3'}`}>
           {links.map((link) => {
             const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
             const Icon = link.icon;
@@ -73,14 +74,16 @@ export default function Sidebar({ userRole }: SidebarProps) {
               <li key={link.href}>
                 <Link
                   href={link.href}
-                  className={`flex items-center gap-3.5 rounded-xl px-4 py-3.5 text-sm font-semibold transition-colors duration-150 ${
+                  title={link.name}
+                  aria-label={link.name}
+                  className={`flex items-center gap-3.5 rounded-xl py-3.5 text-sm font-semibold transition-colors duration-150 ${compactOnSmallScreens ? 'justify-center px-2 xl:justify-start xl:px-4' : 'px-4'} ${
                     active
                       ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/10'
                       : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
                   }`}
                 >
                   <Icon className={`h-4 w-4 ${active ? 'text-white' : 'text-slate-400'}`} />
-                  <span>{link.name}</span>
+                  <span className={compactOnSmallScreens ? 'hidden xl:inline' : ''}>{link.name}</span>
                 </Link>
               </li>
             );
@@ -88,13 +91,14 @@ export default function Sidebar({ userRole }: SidebarProps) {
         </ul>
       </nav>
 
-      <div className="border-t border-slate-800 p-4">
+      <div className={`border-t border-slate-800 ${compactOnSmallScreens ? 'p-1.5 xl:p-4' : 'p-4'}`}>
         <button
           onClick={handleLogout}
+          aria-label="تسجيل الخروج"
           className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 text-sm font-bold transition-colors duration-150 hover:bg-red-600/90"
         >
           <LogOut className="h-4 w-4" />
-          <span>تسجيل الخروج</span>
+          <span className={compactOnSmallScreens ? 'hidden xl:inline' : ''}>تسجيل الخروج</span>
         </button>
       </div>
     </div>

@@ -1,36 +1,33 @@
 'use client';
 
-import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import api from '@/lib/axios';
 import { getApiErrorMessage } from '@/lib/error';
 import { extractAuthUser } from '@/lib/auth';
+import LessonSheet from '@/components/teaching/lesson-sheet';
+import LessonRosterManagement from '@/components/teaching/lesson-roster-management';
+import { cairoDateKey, cairoDateText } from '@/components/teaching/lesson-shared';
+import TodayLessonSchedule, { type ScheduledLesson } from '@/components/teaching/today-lesson-schedule';
 import {
-  BookOpenCheck,
   CalendarCheck,
-  CheckCircle2,
   ClipboardCheck,
-  Clock3,
-  MessageSquareText,
   PhoneCall,
   Plus,
   RefreshCw,
   FileText,
-  Save,
   Search,
   ShieldCheck,
   UserCheck,
-  UserRoundCheck,
   Users,
-  XCircle,
 } from 'lucide-react';
 
 type Role = 'ADMIN' | 'ACCOUNTANT' | 'FINANCE_MANAGER' | 'ASSISTANT';
 type Responsibility = 'ATTENDANCE' | 'GUARDIAN_CONTACT' | 'ACADEMIC_FOLLOW_UP' | 'FULL';
-type AttendanceStatus = 'PRESENT' | 'ABSENT' | 'LATE' | 'LEFT_EARLY' | 'EXCUSED';
+
 type GuardianContactStatus = 'PENDING' | 'CONTACTED' | 'NO_ANSWER' | 'EXCUSED' | 'NEEDS_FOLLOW_UP' | 'WRONG_NUMBER';
-type AcademicActivityType = 'HOMEWORK' | 'CLASSWORK' | 'QUIZ' | 'EXAM' | 'OTHER';
-type AcademicImprovementStatus = 'IMPROVED' | 'NOT_IMPROVED' | 'NEEDS_MORE_WORK' | 'NOT_ASSESSED';
+
+
 
 type Group = {
   id: string;
@@ -81,30 +78,9 @@ type GuardianContact = {
   contacted_at?: string | null;
 };
 
-type AcademicFollowUp = {
-  id: string;
-  student_id: string;
-  entry_date: string;
-  activity_type: AcademicActivityType;
-  score?: number | null;
-  max_score?: number | null;
-  question_type?: string | null;
-  error_type?: string | null;
-  error_reason?: string | null;
-  correction?: string | null;
-  assistant_action?: string | null;
-  result?: AcademicImprovementStatus | null;
-  notes?: string | null;
-  student: Student;
-  assistant?: Assistant | null;
-};
-
 type AttendanceRecord = {
   id: string;
   student_id: string;
-  status: AttendanceStatus;
-  minutes_late?: number | null;
-  notes?: string | null;
   student: Student;
   contacts?: GuardianContact[];
 };
@@ -116,33 +92,12 @@ type TeachingSession = {
   session_date: string;
   status: string;
   group: Group;
-  attendance_records?: AttendanceRecord[];
-  guardian_contact_logs?: GuardianContact[];
-  academic_follow_ups?: AcademicFollowUp[];
-  _count?: {
-    attendance_records: number;
-    guardian_contact_logs: number;
-    academic_follow_ups: number;
-  };
+
 };
 
 type ContactDraft = {
   status: GuardianContactStatus;
   response: string;
-  notes: string;
-};
-
-type FollowUpDraft = {
-  studentId: string;
-  activityType: AcademicActivityType;
-  score: string;
-  maxScore: string;
-  questionType: string;
-  errorType: string;
-  errorReason: string;
-  correction: string;
-  assistantAction: string;
-  result: AcademicImprovementStatus;
   notes: string;
 };
 
@@ -155,14 +110,6 @@ const responsibilityOptions: Array<{ value: Responsibility; label: string }> = [
   { value: 'FULL', label: 'كل مهام المساعد' },
 ];
 
-const attendanceOptions: Array<{ value: AttendanceStatus; label: string; icon: React.ElementType; tone: string }> = [
-  { value: 'PRESENT', label: 'حاضر', icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-  { value: 'ABSENT', label: 'غائب', icon: XCircle, tone: 'bg-red-50 text-red-700 border-red-100' },
-  { value: 'LATE', label: 'متأخر', icon: Clock3, tone: 'bg-amber-50 text-amber-700 border-amber-100' },
-  { value: 'LEFT_EARLY', label: 'خرج بدري', icon: UserRoundCheck, tone: 'bg-blue-50 text-blue-700 border-blue-100' },
-  { value: 'EXCUSED', label: 'غياب بعذر', icon: MessageSquareText, tone: 'bg-slate-100 text-slate-700 border-slate-200' },
-];
-
 const contactStatusOptions: Array<{ value: GuardianContactStatus; label: string }> = [
   { value: 'CONTACTED', label: 'تم الرد' },
   { value: 'NO_ANSWER', label: 'لم يتم الرد' },
@@ -172,49 +119,16 @@ const contactStatusOptions: Array<{ value: GuardianContactStatus; label: string 
   { value: 'PENDING', label: 'لم يتم التواصل' },
 ];
 
-const activityOptions: Array<{ value: AcademicActivityType; label: string }> = [
-  { value: 'HOMEWORK', label: 'واجب' },
-  { value: 'CLASSWORK', label: 'تطبيق داخل الحصة' },
-  { value: 'QUIZ', label: 'اختبار قصير' },
-  { value: 'EXAM', label: 'امتحان' },
-  { value: 'OTHER', label: 'متابعة أخرى' },
-];
-
-const improvementOptions: Array<{ value: AcademicImprovementStatus; label: string }> = [
-  { value: 'NOT_ASSESSED', label: 'لم يتم التقييم' },
-  { value: 'IMPROVED', label: 'تحسن' },
-  { value: 'NOT_IMPROVED', label: 'لم يتحسن' },
-  { value: 'NEEDS_MORE_WORK', label: 'يحتاج شغل أكثر' },
-];
-
 function unwrapData<T>(payload: T | { data: T }): T {
   return 'data' in Object(payload) ? (payload as { data: T }).data : (payload as T);
 }
 
 function todayInputValue() {
-  return new Date().toISOString().split('T')[0];
-}
-
-function attendanceMeta(status: AttendanceStatus) {
-  return attendanceOptions.find((item) => item.value === status) ?? attendanceOptions[1];
+  return cairoDateKey(new Date());
 }
 
 function contactStatusLabel(status?: GuardianContactStatus | null) {
   return contactStatusOptions.find((item) => item.value === status)?.label ?? 'لم يتم التواصل';
-}
-
-function activityLabel(activity?: AcademicActivityType | null) {
-  return activityOptions.find((item) => item.value === activity)?.label ?? 'متابعة';
-}
-
-function improvementLabel(result?: AcademicImprovementStatus | null) {
-  return improvementOptions.find((item) => item.value === result)?.label ?? 'لم يتم التقييم';
-}
-
-function optionalNumber(value: string) {
-  if (!value.trim()) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -231,6 +145,7 @@ export default function SessionsPage() {
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [sessionDate, setSessionDate] = useState(todayInputValue());
   const [sessionTitle, setSessionTitle] = useState('');
+  const [sessionTime, setSessionTime] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -246,19 +161,13 @@ export default function SessionsPage() {
   const [studentAssignmentNotes, setStudentAssignmentNotes] = useState('');
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
-  const [followUpDraft, setFollowUpDraft] = useState<FollowUpDraft>({
-    studentId: '',
-    activityType: 'HOMEWORK',
-    score: '',
-    maxScore: '',
-    questionType: '',
-    errorType: '',
-    errorReason: '',
-    correction: '',
-    assistantAction: '',
-    result: 'NOT_ASSESSED',
-    notes: '',
-  });
+  const [sheetDirty, setSheetDirty] = useState(false);
+  const [sheetRefresh, setSheetRefresh] = useState(0);
+  const [contactsRefresh, setContactsRefresh] = useState(0);
+  const [sheetScroll, setSheetScroll] = useState(0);
+  const [absenceState, setAbsenceState] = useState<{ sessionId: string; rows: AttendanceRecord[] } | null>(null);
+  const sessionRequests = useRef(0);
+  const sheetAnchor = useRef<HTMLDivElement>(null);
 
   const isManager = userRole ? managerRoles.includes(userRole) : false;
   const canCreateSession = useMemo(() => {
@@ -298,41 +207,55 @@ export default function SessionsPage() {
     [assignmentAssistantId, assignmentGroupId, userRole],
   );
 
-  const loadSession = useCallback(async (id: string) => {
-    const response = await api.get(`/teaching/sessions/${id}`);
-    setSelectedSession(unwrapData<TeachingSession>(response.data));
+  const canLeaveSheet = () => !sheetDirty || window.confirm('فيه تعديلات لسه متحفظتش في الشيت. تسيبها وتكمل؟');
+  const focusLesson = useCallback((session: TeachingSession) => {
+    sessionRequests.current++;
+    setSelectedGroupId(session.group_id);
+    setSessionDate(cairoDateKey(new Date(session.session_date)));
+    setSelectedSession(session);
+    setSessions((current) => current.some((row) => row.id === session.id) ? current : [session]);
+    setSheetScroll((value) => value + 1);
   }, []);
+  const openScheduledLesson = (lesson: ScheduledLesson) => {
+    if (selectedSession?.id === lesson.id) {
+      sheetAnchor.current?.scrollIntoView({ block: 'start' });
+      return;
+    }
+    if (!canLeaveSheet()) return;
+    focusLesson({ id: lesson.id, title: lesson.title, group_id: lesson.group.id, group: lesson.group, session_date: lesson.date, status: lesson.status });
+  };
+  const refreshContacts = useCallback(() => setContactsRefresh((value) => value + 1), []);
+  const refreshRoster = useCallback(() => {
+    setSheetRefresh((value) => value + 1);
+    refreshContacts();
+  }, [refreshContacts]);
 
   const loadSessions = useCallback(async () => {
-    if (!userRole) return;
+    if (!userRole || !selectedGroupId) return;
+    const request = ++sessionRequests.current;
     try {
       const response = await api.get('/teaching/sessions', {
-        params: {
-          groupId: selectedGroupId || undefined,
-          date: sessionDate || undefined,
-        },
+        params: { groupId: selectedGroupId, date: sessionDate || undefined },
       });
+      if (request !== sessionRequests.current) return;
       const data = unwrapData<TeachingSession[]>(response.data);
       setSessions(data);
-      if (selectedSession && !data.some((session) => session.id === selectedSession.id)) {
-        setSelectedSession(null);
-      }
+      setSelectedSession((current) => data.find((session) => session.id === current?.id) ?? data[0] ?? null);
     } catch (err) {
-      setError(getErrorMessage(err, 'تعذر تحميل الحصص'));
+      if (request === sessionRequests.current) setError(getErrorMessage(err, 'تعذر تحميل الحصص'));
     }
-  }, [selectedGroupId, selectedSession, sessionDate, userRole]);
+  }, [selectedGroupId, sessionDate, userRole]);
 
   const loadBootstrap = useCallback(async (role: Role) => {
-    setLoading(true);
     setError('');
     try {
       if (managerRoles.includes(role)) {
         const [groupsResponse, assistantsResponse, assignmentsResponse] = await Promise.all([
-          api.get('/accounting/groups', { params: { active: true } }),
+          api.get('/accounting/groups'),
           api.get('/teaching/assistants'),
           api.get('/teaching/assistant-groups'),
         ]);
-        const loadedGroups = unwrapData<Group[]>(groupsResponse.data).filter((group) => group.active !== false);
+        const loadedGroups = unwrapData<Group[]>(groupsResponse.data).sort((a, b) => Number(b.active !== false) - Number(a.active !== false));
         const loadedAssistants = unwrapData<Assistant[]>(assistantsResponse.data);
         const loadedAssignments = unwrapData<AssistantGroupAssignment[]>(assignmentsResponse.data);
         setGroups(loadedGroups);
@@ -345,7 +268,7 @@ export default function SessionsPage() {
         const assignmentsResponse = await api.get('/teaching/assistant-groups');
         const loadedAssignments = unwrapData<AssistantGroupAssignment[]>(assignmentsResponse.data);
         const uniqueGroups = Array.from(
-          new Map(loadedAssignments.map((assignment) => [assignment.group.id, assignment.group])).values(),
+          new Map(loadedAssignments.filter((assignment) => assignment.status === 'ACTIVE').map((assignment) => [assignment.group.id, assignment.group])).values(),
         );
         setGroups(uniqueGroups);
         setAssignments(loadedAssignments);
@@ -370,7 +293,19 @@ export default function SessionsPage() {
         }
         if (!cancelled) {
           setUserRole(user.role);
+          const requested = new URLSearchParams(window.location.search).get('lesson');
+          let openingError = '';
+          if (requested && (managerRoles.includes(user.role) || user.role === 'ASSISTANT')) {
+            try {
+              const lesson = await api.get(`/teaching/sessions/${encodeURIComponent(requested)}`);
+              if (!cancelled) focusLesson(unwrapData<TeachingSession>(lesson.data));
+            } catch {
+              openingError = 'ما قدرناش نفتح الحصة المطلوبة. اختارها من جدول حصص اليوم.';
+            }
+          }
+          if (cancelled) return;
           await loadBootstrap(user.role);
+          if (!cancelled && openingError) setError(openingError);
         }
       } catch {
         if (!cancelled) {
@@ -384,7 +319,7 @@ export default function SessionsPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadBootstrap]);
+  }, [focusLesson, loadBootstrap]);
 
   useEffect(() => {
     void loadSessions();
@@ -396,33 +331,35 @@ export default function SessionsPage() {
     }
   }, [assignmentAssistantId, assignmentGroupId, isManager, loadGroupStudents]);
 
+  const selectedSessionId = selectedSession?.id;
   useEffect(() => {
-    const firstStudentId = selectedSession?.attendance_records?.[0]?.student_id || '';
-    if (firstStudentId) {
-      setFollowUpDraft((current) => (current.studentId ? current : { ...current, studentId: firstStudentId }));
-    }
-  }, [selectedSession?.id, selectedSession?.attendance_records]);
+    if (!loading && selectedSessionId && sheetScroll) sheetAnchor.current?.scrollIntoView({ block: 'start' });
+  }, [loading, selectedSessionId, sheetScroll]);
 
-  const sessionStats = useMemo(() => {
-    const records = selectedSession?.attendance_records || [];
-    return {
-      total: records.length,
-      present: records.filter((record) => record.status === 'PRESENT').length,
-      absent: records.filter((record) => record.status === 'ABSENT' || record.status === 'EXCUSED').length,
-      late: records.filter((record) => record.status === 'LATE').length,
-      contacted: records.filter((record) => (record.contacts || []).length > 0).length,
-    };
-  }, [selectedSession]);
+  const canContact = isManager || assignments.some((assignment) =>
+    assignment.group.id === selectedSession?.group_id && assignment.status === 'ACTIVE'
+    && (assignment.responsibility === 'FULL' || assignment.responsibility === 'GUARDIAN_CONTACT'));
+  useEffect(() => {
+    if (!selectedSessionId || !canContact) return;
+    const controller = new AbortController();
+    api.get(`/teaching/sessions/${selectedSessionId}/absences`, { signal: controller.signal })
+      .then((response) => {
+        if (!controller.signal.aborted) setAbsenceState({ sessionId: selectedSessionId, rows: unwrapData<AttendanceRecord[]>(response.data) });
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) setError(getErrorMessage(err, 'تعذر تحميل متابعة الغياب'));
+      });
+    return () => controller.abort();
+  }, [selectedSessionId, canContact, contactsRefresh]);
 
-  const absenceRecords = useMemo(
-    () => (selectedSession?.attendance_records || []).filter((record) => record.status === 'ABSENT' || record.status === 'EXCUSED'),
-    [selectedSession],
-  );
+  useEffect(() => {
+    if (!sheetDirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [sheetDirty]);
 
-  const sessionStudents = useMemo(() => {
-    const records = selectedSession?.attendance_records || [];
-    return records.map((record) => record.student);
-  }, [selectedSession]);
+  const absenceRecords = absenceState?.sessionId === selectedSessionId ? absenceState?.rows ?? [] : [];
 
   const assignedStudentIds = useMemo(() => {
     return new Set(
@@ -452,7 +389,7 @@ export default function SessionsPage() {
 
   const createSession = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedGroupId) return;
+    if (!selectedGroupId || !sessionDate || !canLeaveSheet()) return;
     setSaving(true);
     setError('');
     setMessage('');
@@ -461,11 +398,14 @@ export default function SessionsPage() {
         groupId: selectedGroupId,
         title: sessionTitle.trim() || undefined,
         sessionDate: new Date(sessionDate).toISOString(),
+        startTime: sessionTime || undefined,
       });
       const created = unwrapData<TeachingSession>(response.data);
       setSelectedSession(created);
       setSessionTitle('');
+      setSessionTime('');
       setMessage('تم إنشاء الحصة وتجهيز قائمة الطلاب');
+      refreshContacts();
       await loadSessions();
     } catch (err) {
       setError(getErrorMessage(err, 'تعذر إنشاء الحصة'));
@@ -534,80 +474,6 @@ export default function SessionsPage() {
     }
   };
 
-  const updateFollowUpDraft = (patch: Partial<FollowUpDraft>) => {
-    setFollowUpDraft((current) => ({ ...current, ...patch }));
-  };
-
-  const saveAcademicFollowUp = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedSession || !followUpDraft.studentId) return;
-
-    const score = optionalNumber(followUpDraft.score);
-    const maxScore = optionalNumber(followUpDraft.maxScore);
-    if ((followUpDraft.score.trim() && score === undefined) || (followUpDraft.maxScore.trim() && maxScore === undefined)) {
-      setError('درجة الطالب أو الدرجة النهائية غير صحيحة');
-      setMessage('');
-      return;
-    }
-
-    setSaving(true);
-    setError('');
-    setMessage('');
-    try {
-      await api.post('/teaching/academic-follow-ups', {
-        sessionId: selectedSession.id,
-        studentId: followUpDraft.studentId,
-        entryDate: new Date().toISOString(),
-        activityType: followUpDraft.activityType,
-        score,
-        maxScore,
-        questionType: followUpDraft.questionType.trim() || undefined,
-        errorType: followUpDraft.errorType.trim() || undefined,
-        errorReason: followUpDraft.errorReason.trim() || undefined,
-        correction: followUpDraft.correction.trim() || undefined,
-        assistantAction: followUpDraft.assistantAction.trim() || undefined,
-        result: followUpDraft.result,
-        notes: followUpDraft.notes.trim() || undefined,
-      });
-      await loadSession(selectedSession.id);
-      setFollowUpDraft((current) => ({
-        ...current,
-        score: '',
-        maxScore: '',
-        questionType: '',
-        errorType: '',
-        errorReason: '',
-        correction: '',
-        assistantAction: '',
-        result: 'NOT_ASSESSED',
-        notes: '',
-      }));
-      setMessage('تم حفظ المتابعة الدراسية للطالب');
-    } catch (err) {
-      setError(getErrorMessage(err, 'تعذر حفظ المتابعة الدراسية'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateAttendance = async (record: AttendanceRecord, status: AttendanceStatus) => {
-    if (!selectedSession) return;
-    setSaving(true);
-    setError('');
-    setMessage('');
-    try {
-      await api.post(`/teaching/sessions/${selectedSession.id}/attendance`, {
-        records: [{ studentId: record.student_id, status }],
-      });
-      await loadSession(selectedSession.id);
-      setMessage('تم تحديث حضور الطالب');
-    } catch (err) {
-      setError(getErrorMessage(err, 'تعذر تحديث الحضور'));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const updateContactDraft = (recordId: string, patch: Partial<ContactDraft>) => {
     setContactDrafts((current) => ({
       ...current,
@@ -637,7 +503,7 @@ export default function SessionsPage() {
         response: draft.response.trim() || undefined,
         notes: draft.notes.trim() || undefined,
       });
-      await loadSession(selectedSession.id);
+      refreshContacts();
       setContactDrafts((current) => ({ ...current, [record.id]: { status: 'CONTACTED', response: '', notes: '' } }));
       setMessage('تم تسجيل تواصل ولي الأمر');
     } catch (err) {
@@ -656,11 +522,12 @@ export default function SessionsPage() {
             تشغيل الحصص والحضور
           </h1>
           <p className="mt-1 text-sm font-semibold text-slate-500">
-            إنشاء الحصص، تسجيل الحضور، ومتابعة ولي الأمر للطلاب الغائبين.
+            افتح حصة الجروب وسجّل الحضور والدرجات والملاحظات في شيت واحد.
           </p>
         </div>
         <Link
           href="/sessions/reports"
+          onClick={(event) => { if (!canLeaveSheet()) event.preventDefault(); }}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700"
         >
           <FileText className="h-4 w-4" />
@@ -669,8 +536,10 @@ export default function SessionsPage() {
         <button
           type="button"
           onClick={() => {
-            void loadBootstrap(userRole as Role);
+            if (!userRole || !canLeaveSheet()) return;
+            void loadBootstrap(userRole);
             void loadSessions();
+            refreshRoster();
           }}
           className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
         >
@@ -708,7 +577,13 @@ export default function SessionsPage() {
                   <span>الجروب</span>
                   <select
                     value={selectedGroupId}
-                    onChange={(event) => setSelectedGroupId(event.target.value)}
+                    onChange={(event) => {
+                      if (!canLeaveSheet()) return;
+                      sessionRequests.current++;
+                      setSessions([]);
+                      setSelectedSession(null);
+                      setSelectedGroupId(event.target.value);
+                    }}
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-500"
                   >
                     {groups.map((group) => (
@@ -723,11 +598,21 @@ export default function SessionsPage() {
                   <input
                     type="date"
                     value={sessionDate}
-                    onChange={(event) => setSessionDate(event.target.value)}
+                    onChange={(event) => {
+                      if (!canLeaveSheet()) return;
+                      sessionRequests.current++;
+                      setSessions([]);
+                      setSelectedSession(null);
+                      setSessionDate(event.target.value);
+                    }}
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-500"
                   />
                 </label>
               </div>
+
+              {isManager && selectedGroupId && (
+                <LessonRosterManagement key={selectedGroupId} groupId={selectedGroupId} dirty={sheetDirty} onSaved={refreshRoster} />
+              )}
 
               {canCreateSession && (
                 <form onSubmit={createSession} className="space-y-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
@@ -739,6 +624,11 @@ export default function SessionsPage() {
                       placeholder="مثال: حصة مراجعة أو حصة يوم السبت"
                       className="w-full rounded-xl border border-emerald-100 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-500"
                     />
+                  </label>
+                  <label className="block space-y-2 text-sm font-bold text-slate-700">
+                    <span>ميعاد الحصة بتوقيت القاهرة <span className="text-xs font-semibold text-slate-500">(اختياري)</span></span>
+                    <input type="time" value={sessionTime} onChange={(event) => setSessionTime(event.target.value)}
+                      className="w-full rounded-xl border border-emerald-100 bg-white px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-500" />
                   </label>
                   <button
                     type="submit"
@@ -821,7 +711,7 @@ export default function SessionsPage() {
                       <button
                         key={session.id}
                         type="button"
-                        onClick={() => void loadSession(session.id)}
+                        onClick={() => { if (selectedSession?.id !== session.id && canLeaveSheet()) setSelectedSession(session); }}
                         className={`w-full rounded-xl border p-4 text-right transition ${
                           selectedSession?.id === session.id
                             ? 'border-emerald-200 bg-emerald-50'
@@ -832,13 +722,10 @@ export default function SessionsPage() {
                           <div>
                             <div className="font-black text-slate-900">{session.title || session.group.name}</div>
                             <div className="mt-1 text-xs font-semibold text-slate-500">
-                              {new Date(session.session_date).toLocaleDateString('ar-EG')}
+                              {cairoDateText(session.session_date)}
                             </div>
                           </div>
-                          <div className="text-left text-xs font-bold text-slate-500">
-                            <div>{session._count?.attendance_records || 0} طالب</div>
-                            <div>{session._count?.guardian_contact_logs || 0} تواصل</div>
-                          </div>
+                          {session.status === 'CANCELLED' && <span className="text-xs font-bold text-red-700">حصة ملغية</span>}
                         </div>
                       </button>
                     ))}
@@ -847,6 +734,96 @@ export default function SessionsPage() {
               </div>
             </section>
           </div>
+
+          {selectedSession && (
+            <div ref={sheetAnchor} className="min-w-0 scroll-mt-4">
+              <LessonSheet key={`${selectedSession.id}:${sheetRefresh}`} sessionId={selectedSession.id} onSaved={refreshContacts} onDirtyChange={setSheetDirty} />
+            </div>
+          )}
+
+          {selectedSession && canContact && selectedSession.status !== 'CANCELLED' && (
+            <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div className="space-y-3">
+                <h3 className="flex items-center gap-2 text-lg font-black text-slate-900">
+                  <PhoneCall className="h-5 w-5 text-red-600" />
+                  متابعة الغياب مع ولي الأمر
+                </h3>
+                {absenceState?.sessionId !== selectedSession.id ? (
+                  <p className="text-sm font-bold text-slate-500">جاري تحميل متابعة الغياب…</p>
+                ) : absenceRecords.length === 0 ? (
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-bold text-emerald-700">
+                    مفيش غياب أو اعتذار متسجّل للطلبة اللي بتتابعهم في الحصة دي.
+                  </div>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {absenceRecords.map((record) => {
+                      const latestContact = record.contacts?.[0];
+                      const draft = contactDrafts[record.id] || { status: 'CONTACTED', response: '', notes: '' };
+                      return (
+                        <div key={record.id} className="space-y-3 rounded-xl border border-red-100 bg-red-50/40 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-black text-slate-900">{record.student.full_name}</div>
+                              <div className="mt-1 text-xs font-bold text-slate-500">
+                                رقم ولي الأمر: {record.student.guardian_phone || 'غير مسجل'}
+                              </div>
+                            </div>
+                            <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-700">
+                              {contactStatusLabel(latestContact?.status)}
+                            </span>
+                          </div>
+
+                          {latestContact?.response && (
+                            <div className="rounded-lg bg-white p-3 text-xs font-semibold text-slate-600">
+                              آخر رد: {latestContact.response}
+                            </div>
+                          )}
+
+                          <div className="grid gap-2 sm:grid-cols-[150px_1fr]">
+                            <select
+                              value={draft.status}
+                              onChange={(event) => updateContactDraft(record.id, { status: event.target.value as GuardianContactStatus })}
+                              className="rounded-xl border border-red-100 bg-white px-3 py-2 text-sm font-bold"
+                            >
+                              {contactStatusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              value={draft.response}
+                              onChange={(event) => updateContactDraft(record.id, { response: event.target.value })}
+                              placeholder="رد ولي الأمر"
+                              className="rounded-xl border border-red-100 bg-white px-3 py-2 text-sm font-semibold"
+                            />
+                          </div>
+                          <textarea
+                            value={draft.notes}
+                            onChange={(event) => updateContactDraft(record.id, { notes: event.target.value })}
+                            placeholder="ملاحظات إضافية"
+                            rows={2}
+                            className="w-full rounded-xl border border-red-100 bg-white px-3 py-2 text-sm font-semibold"
+                          />
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void saveGuardianContact(record)}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-black text-white transition hover:bg-red-700 disabled:opacity-60"
+                          >
+                            <PhoneCall className="h-4 w-4" />
+                            حفظ نتيجة التواصل
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {(isManager || userRole === 'ASSISTANT') && <TodayLessonSchedule activeId={selectedSessionId} onOpen={openScheduledLesson} refreshKey={contactsRefresh} />}
 
           {isManager && (
             <section className="space-y-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
@@ -974,326 +951,7 @@ export default function SessionsPage() {
             </section>
           )}
 
-          {selectedSession && (
-            <section className="space-y-5 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 border-b border-slate-100 pb-5 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-xl font-black text-slate-900">{selectedSession.title || selectedSession.group.name}</h2>
-                  <p className="mt-1 text-sm font-bold text-slate-500">
-                    {selectedSession.group.name}، {new Date(selectedSession.session_date).toLocaleDateString('ar-EG')}
-                  </p>
-                </div>
-                <div className="grid grid-cols-5 gap-2 text-center text-xs font-black">
-                  <div className="rounded-xl bg-slate-100 px-3 py-2 text-slate-700">الكل<br />{sessionStats.total}</div>
-                  <div className="rounded-xl bg-emerald-50 px-3 py-2 text-emerald-700">حاضر<br />{sessionStats.present}</div>
-                  <div className="rounded-xl bg-red-50 px-3 py-2 text-red-700">غائب<br />{sessionStats.absent}</div>
-                  <div className="rounded-xl bg-amber-50 px-3 py-2 text-amber-700">متأخر<br />{sessionStats.late}</div>
-                  <div className="rounded-xl bg-blue-50 px-3 py-2 text-blue-700">تواصل<br />{sessionStats.contacted}</div>
-                </div>
-              </div>
 
-              <div className="overflow-x-auto rounded-xl border border-slate-100">
-                <table className="w-full min-w-[900px] text-right text-sm">
-                  <thead className="bg-slate-50 text-xs text-slate-500">
-                    <tr>
-                      <th className="p-3 font-black">الطالب</th>
-                      <th className="p-3 font-black">ولي الأمر</th>
-                      <th className="p-3 font-black">الحالة الحالية</th>
-                      <th className="p-3 font-black">تسجيل سريع</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(selectedSession.attendance_records || []).map((record) => {
-                      const meta = attendanceMeta(record.status);
-                      const StatusIcon = meta.icon;
-                      return (
-                        <tr key={record.id} className="hover:bg-slate-50/60">
-                          <td className="p-3">
-                            <div className="font-black text-slate-900">{record.student.full_name}</div>
-                            <div className="text-xs font-semibold text-slate-500">{record.student.code}</div>
-                          </td>
-                          <td className="p-3 font-semibold text-slate-600">
-                            {record.student.guardian_phone || record.student.student_phone || 'لا يوجد رقم'}
-                          </td>
-                          <td className="p-3">
-                            <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${meta.tone}`}>
-                              <StatusIcon className="h-3.5 w-3.5" />
-                              {meta.label}
-                            </span>
-                          </td>
-                          <td className="p-3">
-                            <div className="flex flex-wrap gap-2">
-                              {attendanceOptions.map((option) => (
-                                <button
-                                  key={option.value}
-                                  type="button"
-                                  disabled={saving}
-                                  onClick={() => void updateAttendance(record, option.value)}
-                                  className={`rounded-lg border px-3 py-2 text-xs font-black transition disabled:opacity-60 ${
-                                    record.status === option.value
-                                      ? option.tone
-                                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                  }`}
-                                >
-                                  {option.label}
-                                </button>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="space-y-4 rounded-xl border border-blue-100 bg-blue-50/30 p-4">
-                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                  <h3 className="flex items-center gap-2 text-lg font-black text-slate-900">
-                    <BookOpenCheck className="h-5 w-5 text-blue-600" />
-                    المتابعة الدراسية والتصحيح
-                  </h3>
-                  <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-blue-700">
-                    {(selectedSession.academic_follow_ups || []).length.toLocaleString('ar-EG')} متابعة
-                  </span>
-                </div>
-
-                {sessionStudents.length === 0 ? (
-                  <div className="rounded-xl border border-slate-100 bg-white p-4 text-sm font-bold text-slate-400">
-                    لا يوجد طلبة داخل هذه الحصة.
-                  </div>
-                ) : (
-                  <form onSubmit={saveAcademicFollowUp} className="space-y-3">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <label className="space-y-2 text-sm font-bold text-slate-700">
-                        <span>الطالب</span>
-                        <select
-                          value={followUpDraft.studentId}
-                          onChange={(event) => updateFollowUpDraft({ studentId: event.target.value })}
-                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                        >
-                          {sessionStudents.map((student) => (
-                            <option key={student.id} value={student.id}>
-                              {student.full_name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-2 text-sm font-bold text-slate-700">
-                        <span>نوع المتابعة</span>
-                        <select
-                          value={followUpDraft.activityType}
-                          onChange={(event) => updateFollowUpDraft({ activityType: event.target.value as AcademicActivityType })}
-                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                        >
-                          {activityOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-2 text-sm font-bold text-slate-700">
-                        <span>درجة الطالب</span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={followUpDraft.score}
-                          onChange={(event) => updateFollowUpDraft({ score: event.target.value })}
-                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                        />
-                      </label>
-                      <label className="space-y-2 text-sm font-bold text-slate-700">
-                        <span>الدرجة النهائية</span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={followUpDraft.maxScore}
-                          onChange={(event) => updateFollowUpDraft({ maxScore: event.target.value })}
-                          className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <input
-                        value={followUpDraft.questionType}
-                        onChange={(event) => updateFollowUpDraft({ questionType: event.target.value })}
-                        placeholder="نوع السؤال"
-                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                      />
-                      <input
-                        value={followUpDraft.errorType}
-                        onChange={(event) => updateFollowUpDraft({ errorType: event.target.value })}
-                        placeholder="نوع الغلط"
-                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                      />
-                      <select
-                        value={followUpDraft.result}
-                        onChange={(event) => updateFollowUpDraft({ result: event.target.value as AcademicImprovementStatus })}
-                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                      >
-                        {improvementOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="grid gap-3 lg:grid-cols-3">
-                      <textarea
-                        value={followUpDraft.errorReason}
-                        onChange={(event) => updateFollowUpDraft({ errorReason: event.target.value })}
-                        placeholder="سبب الغلط"
-                        rows={3}
-                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                      />
-                      <textarea
-                        value={followUpDraft.correction}
-                        onChange={(event) => updateFollowUpDraft({ correction: event.target.value })}
-                        placeholder="التصحيح المطلوب"
-                        rows={3}
-                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                      />
-                      <textarea
-                        value={followUpDraft.assistantAction}
-                        onChange={(event) => updateFollowUpDraft({ assistantAction: event.target.value })}
-                        placeholder="إجراء المساعد"
-                        rows={3}
-                        className="rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                      />
-                    </div>
-
-                    <textarea
-                      value={followUpDraft.notes}
-                      onChange={(event) => updateFollowUpDraft({ notes: event.target.value })}
-                      placeholder="ملاحظات إضافية"
-                      rows={2}
-                      className="w-full rounded-xl border border-blue-100 bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-blue-500"
-                    />
-
-                    <button
-                      type="submit"
-                      disabled={saving || !followUpDraft.studentId}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:opacity-60"
-                    >
-                      <Save className="h-4 w-4" />
-                      حفظ المتابعة الدراسية
-                    </button>
-                  </form>
-                )}
-
-                {(selectedSession.academic_follow_ups || []).length > 0 && (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {(selectedSession.academic_follow_ups || []).slice(0, 6).map((entry) => (
-                      <div key={entry.id} className="rounded-xl border border-blue-100 bg-white p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="font-black text-slate-900">{entry.student.full_name}</div>
-                            <div className="mt-1 text-xs font-bold text-slate-500">
-                              {activityLabel(entry.activity_type)}، {new Date(entry.entry_date).toLocaleDateString('ar-EG')}
-                            </div>
-                          </div>
-                          <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700">
-                            {improvementLabel(entry.result)}
-                          </span>
-                        </div>
-                        {(entry.score != null || entry.max_score != null) && (
-                          <div className="mt-3 text-sm font-black text-slate-700">
-                            الدرجة: {entry.score ?? '-'} / {entry.max_score ?? '-'}
-                          </div>
-                        )}
-                        {(entry.error_type || entry.correction || entry.assistant_action) && (
-                          <div className="mt-3 space-y-1 text-xs font-semibold text-slate-600">
-                            {entry.error_type && <div>نوع الغلط: {entry.error_type}</div>}
-                            {entry.correction && <div>التصحيح: {entry.correction}</div>}
-                            {entry.assistant_action && <div>إجراء المساعد: {entry.assistant_action}</div>}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="flex items-center gap-2 text-lg font-black text-slate-900">
-                  <PhoneCall className="h-5 w-5 text-red-600" />
-                  متابعة الغياب مع ولي الأمر
-                </h3>
-                {absenceRecords.length === 0 ? (
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-bold text-emerald-700">
-                    لا يوجد طلاب غائبون في هذه الحصة.
-                  </div>
-                ) : (
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    {absenceRecords.map((record) => {
-                      const latestContact = record.contacts?.[0];
-                      const draft = contactDrafts[record.id] || { status: 'CONTACTED', response: '', notes: '' };
-                      return (
-                        <div key={record.id} className="space-y-3 rounded-xl border border-red-100 bg-red-50/40 p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="font-black text-slate-900">{record.student.full_name}</div>
-                              <div className="mt-1 text-xs font-bold text-slate-500">
-                                رقم ولي الأمر: {record.student.guardian_phone || 'غير مسجل'}
-                              </div>
-                            </div>
-                            <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-700">
-                              {contactStatusLabel(latestContact?.status)}
-                            </span>
-                          </div>
-
-                          {latestContact?.response && (
-                            <div className="rounded-lg bg-white p-3 text-xs font-semibold text-slate-600">
-                              آخر رد: {latestContact.response}
-                            </div>
-                          )}
-
-                          <div className="grid gap-2 sm:grid-cols-[150px_1fr]">
-                            <select
-                              value={draft.status}
-                              onChange={(event) => updateContactDraft(record.id, { status: event.target.value as GuardianContactStatus })}
-                              className="rounded-xl border border-red-100 bg-white px-3 py-2 text-sm font-bold"
-                            >
-                              {contactStatusOptions.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              value={draft.response}
-                              onChange={(event) => updateContactDraft(record.id, { response: event.target.value })}
-                              placeholder="رد ولي الأمر"
-                              className="rounded-xl border border-red-100 bg-white px-3 py-2 text-sm font-semibold"
-                            />
-                          </div>
-                          <textarea
-                            value={draft.notes}
-                            onChange={(event) => updateContactDraft(record.id, { notes: event.target.value })}
-                            placeholder="ملاحظات إضافية"
-                            rows={2}
-                            className="w-full rounded-xl border border-red-100 bg-white px-3 py-2 text-sm font-semibold"
-                          />
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void saveGuardianContact(record)}
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-black text-white transition hover:bg-red-700 disabled:opacity-60"
-                          >
-                            <PhoneCall className="h-4 w-4" />
-                            حفظ نتيجة التواصل
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
         </>
       )}
     </div>
