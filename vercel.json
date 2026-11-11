@@ -7,8 +7,9 @@
     "backend": {
       "root": "backend/",
       "entrypoint": "src/server.ts",
-      "framework": "express",
-      "buildCommand": "npm run build"
+      "framework": "nestjs",
+      "buildCommand": "npm run build",
+      "outputDirectory": "."
     }
   },
   "rewrites": [
