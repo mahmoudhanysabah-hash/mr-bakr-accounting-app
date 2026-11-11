@@ -20,7 +20,7 @@ import { RemoveTeachingEnrollmentDto, SaveLessonSheetDto } from './dto/lesson-sh
 import { TeachingService } from './teaching.service';
 import { LessonSheetService } from './lesson-sheet.service';
 import { LessonReportService } from './lesson-report.service';
-import { TeachingActor } from './lesson-roster';
+import type { TeachingActor } from './lesson-roster';
 import { TodayLessonService } from './today-lesson.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
