@@ -3,6 +3,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import api from '@/lib/axios';
+import { getApiErrorMessage } from '@/lib/error';
+import ArchiveEntityDialog from '@/components/accounting/archive-entity-dialog';
+import useAccountingManager from '@/hooks/use-accounting-manager';
 import { 
   Plus, 
   Search, 
@@ -11,10 +14,16 @@ import {
   Phone, 
   ChevronLeft, 
   CheckCircle, 
-  AlertCircle 
+  AlertCircle,
+  Trash2,
 } from 'lucide-react';
 
 export default function StudentsPage() {
+  const canManage = useAccountingManager();
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [notice, setNotice] = useState('');
+  const [pageError, setPageError] = useState('');
   const [students, setStudents] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,20 +61,22 @@ export default function StudentsPage() {
   const fetchStudents = useCallback(async () => {
     try {
       setLoading(true);
+      setPageError('');
       const res = await api.get('/accounting/students', {
         params: {
           q: search || undefined,
           status: filterStatus || undefined,
-          groupId: filterGroup || undefined
+          groupId: filterGroup || undefined,
+          archived: showArchived,
         }
       });
       setStudents(res.data?.data || res.data || []);
     } catch (e) {
-      console.error(e);
+      setPageError(getApiErrorMessage(e, 'تعذّر تحميل قائمة الطلاب.'));
     } finally {
       setLoading(false);
     }
-  }, [search, filterStatus, filterGroup]);
+  }, [search, filterStatus, filterGroup, showArchived]);
 
   useEffect(() => {
     // Fetch initial list of students and groups
@@ -142,19 +153,25 @@ export default function StudentsPage() {
   return (
     <div className="space-y-8 font-cairo" dir="rtl">
       {/* Title section */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+      <div className="flex flex-wrap justify-between items-center gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">شؤون الطلاب المالية</h1>
+          <h1 className="text-2xl font-bold text-slate-800">{showArchived ? 'أرشيف الطلاب المحذوفين' : 'شؤون الطلاب المالية'}</h1>
           <p className="text-slate-500 text-sm mt-1">عرض وتسجيل حسابات الطلاب الجدد والحاليين</p>
         </div>
-        <button 
+        <select aria-label="عرض الطلاب" value={showArchived ? 'archived' : 'current'} onChange={(event) => { setShowArchived(event.target.value === 'archived'); setNotice(''); }} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-700">
+          <option value="current">الطلاب الحاليون</option>
+          <option value="archived">الطلاب المحذوفون — الأرشيف</option>
+        </select>
+        {!showArchived && <button
           onClick={() => setShowAddModal(true)} 
           className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-md shadow-emerald-500/10 cursor-pointer"
         >
           <Plus className="w-5 h-5" />
           <span>تسجيل طالب جديد</span>
-        </button>
+        </button>}
       </div>
+      {notice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-900">{notice}</p>}
+      {pageError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{pageError}</p>}
 
       {/* Filters & Search */}
       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -227,12 +244,12 @@ export default function StudentsPage() {
                     <td className="p-4 font-black text-slate-800">{student.code}</td>
                     <td className="p-4 font-bold text-slate-900">{student.full_name}</td>
                     <td className="p-4 text-slate-500 font-semibold">{student.student_phone || 'لا يوجد'}</td>
-                    <td className="p-4">{getStatusBadge(student.status)}</td>
+                    <td className="p-4">{student.archived_at ? <span className="text-xs font-bold text-slate-600">محذوف — السجل محفوظ</span> : getStatusBadge(student.status)}</td>
                     <td className="p-4 text-slate-400 font-semibold">{new Date(student.joined_at).toLocaleDateString('ar-EG')}</td>
                     <td className={`p-4 font-bold ${Number(student.credit_balance) > 0 ? 'text-emerald-600' : 'text-slate-900'}`}>
                       {Number(student.credit_balance).toLocaleString('ar-EG')} ج.م
                     </td>
-                    <td className="p-4">
+                    <td className="p-4"><div className="flex items-center gap-2">
                       <Link 
                         href={`/students/${student.id}`}
                         className="inline-flex items-center gap-1.5 text-xs font-black text-emerald-600 hover:text-emerald-700 bg-emerald-50 px-3.5 py-2 rounded-xl transition-all cursor-pointer"
@@ -240,13 +257,17 @@ export default function StudentsPage() {
                         <span>عرض الحساب</span>
                         <ChevronLeft className="w-3.5 h-3.5" />
                       </Link>
+                      {!showArchived && canManage && <button type="button" title={`حذف الطالب ${student.full_name}`} onClick={() => { setNotice(''); setDeleteTarget({ id: student.id, name: student.full_name }); }} className="rounded-xl bg-red-50 p-2.5 text-red-600 hover:bg-red-100">
+                        <Trash2 className="h-4 w-4" />
+                      </button>}
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {students.length === 0 && (
                   <tr>
                     <td colSpan={7} className="p-12 text-center text-slate-400 font-bold">
-                      لا يوجد طلاب يطابقون خيارات البحث الحالية.
+                      {showArchived ? 'لا يوجد طلاب محذوفون يطابقون البحث في الأرشيف.' : 'لا يوجد طلاب يطابقون خيارات البحث الحالية.'}
                     </td>
                   </tr>
                 )}
@@ -255,6 +276,12 @@ export default function StudentsPage() {
           </div>
         )}
       </div>
+
+      {deleteTarget && <ArchiveEntityDialog kind="student" id={deleteTarget.id} name={deleteTarget.name} onCancel={() => setDeleteTarget(null)} onDeleted={() => {
+        setDeleteTarget(null);
+        setNotice('تم حذف الطالب من قوائم النظام؛ حساباته ودرجاته وحضوره محفوظين في الأرشيف.');
+        void fetchStudents();
+      }} />}
 
       {/* Add Student Modal */}
       {showAddModal && (

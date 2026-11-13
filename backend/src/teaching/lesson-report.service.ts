@@ -29,6 +29,7 @@ export function cairoMonthStart(year: number, month: number) {
 const inRange = (date: Date, start: Date, end: Date) => date >= start && date < end;
 
 function overlapsMonth(enrollment: RosterEnrollment, start: Date, end: Date) {
+  if (enrollment.student?.archived_at && enrollment.student.archived_at <= start) return false;
   if (enrollment.starts_at >= end) return false;
   if (enrollment.teaching_last_session) return lessonTime(enrollment.teaching_last_session) >= start;
   return enrollment.teaching_continues_after_end || !enrollment.ends_at || enrollment.ends_at > start;

@@ -234,7 +234,7 @@ export class LessonSheetService {
       this.prisma.teachingSession.findMany({ where: { group_id: groupId, status: { not: TeachingSessionStatus.CANCELLED } }, select: lessonSelect }),
     ]);
     return {
-      enrollments: enrollments.map((row) => ({
+      enrollments: enrollments.filter((row) => !row.student.archived_at).map((row) => ({
         id: row.id, studentName: row.student.full_name, studentCode: row.student.code,
         startsAt: row.starts_at, endsAt: row.ends_at, continues: row.teaching_continues_after_end,
         removedAt: row.teaching_removed_at, reason: row.teaching_removal_reason, removedBy: row.teaching_removed_by?.name,

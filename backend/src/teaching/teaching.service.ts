@@ -57,7 +57,7 @@ export class TeachingService {
 
   private async ensureGroup(groupId: string) {
     const group = await this.prisma.accountingGroup.findUnique({ where: { id: groupId } });
-    if (!group) {
+    if (!group || group.archived_at) {
       throw new NotFoundException('Group not found');
     }
     return group;
@@ -69,7 +69,7 @@ export class TeachingService {
         student_id: studentId,
         group_id: groupId,
         status: 'ACTIVE',
-        student: { status: 'ACTIVE' },
+        student: { status: 'ACTIVE', archived_at: null },
       },
       include: { student: true },
     });
@@ -260,6 +260,7 @@ export class TeachingService {
       where: {
         assistant_id: scopedAssistantId,
         group_id: groupId,
+        group: { archived_at: null },
       },
       include: {
         assistant: { select: this.userSelect() },
@@ -302,7 +303,7 @@ export class TeachingService {
         group_id: dto.groupId,
         status: 'ACTIVE',
         student_id: { in: dto.studentIds },
-        student: { status: 'ACTIVE' },
+        student: { status: 'ACTIVE', archived_at: null },
       },
       select: { student_id: true },
     });
@@ -380,6 +381,8 @@ export class TeachingService {
       where: {
         assistant_id: scopedAssistantId,
         group_id: groupId,
+        group: { archived_at: null },
+        student: { archived_at: null },
       },
       include: {
         assistant: { select: this.userSelect() },
@@ -454,7 +457,7 @@ export class TeachingService {
       return [];
     }
 
-    const where: any = {};
+    const where: any = { group: { archived_at: null } };
     if (groupId) where.group_id = groupId;
     if (groupIds) where.group_id = { in: groupId ? groupIds.filter((id) => id === groupId) : groupIds };
     if (date) {

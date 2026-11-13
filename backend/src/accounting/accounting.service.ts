@@ -37,6 +37,7 @@ import {
   UpdateManagedStudentDto,
   UpdateAccountingPaymentDto,
   BulkEnrollStudentsDto,
+  ArchiveAccountingEntityDto,
 } from './dto/accounting.dto';
 
 @Injectable()
@@ -88,13 +89,14 @@ export class AccountingService {
     return student;
   }
 
-  async listStudents(query?: string, status?: ManagedStudentStatus, groupId?: string) {
+  async listStudents(query?: string, status?: ManagedStudentStatus, groupId?: string, archived = false) {
     const q = query?.trim();
     const activeStatus = status && (status as string) !== '' ? status : undefined;
     const activeGroupId = groupId && groupId !== '' ? groupId : undefined;
 
     return this.prisma.managedStudent.findMany({
       where: {
+        archived_at: archived ? { not: null } : null,
         status: activeStatus,
         enrollments: activeGroupId
           ? { some: { group_id: activeGroupId, status: EnrollmentStatus.ACTIVE } }
@@ -110,7 +112,7 @@ export class AccountingService {
       },
       include: {
         enrollments: {
-          where: { status: EnrollmentStatus.ACTIVE },
+          where: { status: EnrollmentStatus.ACTIVE, group: { archived_at: null } },
           include: { group: true },
           orderBy: { starts_at: 'desc' },
         },
@@ -168,6 +170,7 @@ export class AccountingService {
   async updateStudent(id: string, dto: UpdateManagedStudentDto, actorId?: string) {
     const before = await this.prisma.managedStudent.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Student not found');
+    if (before.archived_at) throw new ConflictException('الطالب محذوف من القوائم؛ سجله محفوظ في الأرشيف.');
     const student = await this.prisma.managedStudent.update({
       where: { id },
       data: {
@@ -222,11 +225,11 @@ export class AccountingService {
     return group;
   }
 
-  listGroups(active?: boolean) {
+  listGroups(active?: boolean, archived = false) {
     return this.prisma.accountingGroup.findMany({
-      where: { active },
+      where: { active, archived_at: archived ? { not: null } : null },
       include: {
-        _count: { select: { enrollments: { where: { status: EnrollmentStatus.ACTIVE } } } },
+        _count: { select: { enrollments: { where: { status: EnrollmentStatus.ACTIVE, student: { archived_at: null } } } } },
       },
       orderBy: [{ active: 'desc' }, { name: 'asc' }],
     });
@@ -235,6 +238,7 @@ export class AccountingService {
   async updateGroup(id: string, dto: UpdateAccountingGroupDto, actorId?: string) {
     const before = await this.prisma.accountingGroup.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Group not found');
+    if (before.archived_at) throw new ConflictException('المجموعة محذوفة من القوائم؛ سجلها محفوظ في الأرشيف.');
     const group = await this.prisma.accountingGroup.update({
       where: { id },
       data: {
@@ -265,54 +269,40 @@ export class AccountingService {
     return group;
   }
 
-  async deleteGroup(id: string, actorId?: string) {
-    const group = await this.prisma.accountingGroup.findUnique({
-      where: { id },
-      include: {
-        _count: {
-          select: {
-            enrollments: true,
-            monthly_plans: true,
-            charges: true,
-            discounts: true,
-            refunds: true,
-          },
-        },
-      },
-    });
-    if (!group) throw new NotFoundException('Group not found');
-
-    const hasHistory =
-      group._count.enrollments > 0 ||
-      group._count.monthly_plans > 0 ||
-      group._count.charges > 0 ||
-      group._count.discounts > 0 ||
-      group._count.refunds > 0;
-
-    if (hasHistory) {
-      const archived = await this.prisma.accountingGroup.update({
-        where: { id },
-        data: { active: false, ends_at: new Date() },
+  async deleteGroup(id: string, actorId?: string, reason?: string) {
+    const archiveReason = reason?.trim() || 'حذف المجموعة من النظام';
+    return this.prisma.$transaction(async (tx) => {
+      const group = await tx.accountingGroup.findUnique({ where: { id }, select: { id: true, active: true, archived_at: true } });
+      if (!group) throw new NotFoundException('المجموعة غير موجودة.');
+      if (group.archived_at) return { deleted: true, archived: true, id };
+      const changed = await tx.accountingGroup.updateMany({
+        where: { id, archived_at: null },
+        data: { active: false, archived_at: new Date(), archive_reason: archiveReason },
       });
-      await this.audit.log({
-        userId: actorId,
-        action: 'ACCOUNTING_GROUP_ARCHIVED',
-        entity: 'accounting_group',
-        entityId: id,
-        payload: { before: group, after: archived, reason: 'group_has_accounting_history' },
-      });
-      return { deleted: false, archived: true, group: archived };
-    }
-
-    await this.prisma.accountingGroup.delete({ where: { id } });
-    await this.audit.log({
-      userId: actorId,
-      action: 'ACCOUNTING_GROUP_DELETED',
-      entity: 'accounting_group',
-      entityId: id,
-      payload: { group },
+      if (changed.count) await tx.auditLog.create({ data: {
+        user_id: actorId, action: 'ACCOUNTING_GROUP_ARCHIVED', entity: 'accounting_group', entity_id: id,
+        payload_json: JSON.stringify({ reason: archiveReason, previousActive: group.active }),
+      } });
+      return { deleted: true, archived: true, id };
     });
-    return { deleted: true, archived: false };
+  }
+
+  async deleteStudent(id: string, dto: ArchiveAccountingEntityDto, actorId?: string) {
+    const reason = dto.reason?.trim();
+    if (!reason) throw new BadRequestException('اكتب سبب حذف الطالب؛ سجلاته القديمة هتفضل محفوظة.');
+    return this.prisma.$transaction(async (tx) => {
+      const student = await tx.managedStudent.findUnique({ where: { id }, select: { id: true, status: true, archived_at: true } });
+      if (!student) throw new NotFoundException('الطالب غير موجود.');
+      if (student.archived_at) return { deleted: true, archived: true, id };
+      const changed = await tx.managedStudent.updateMany({
+        where: { id, archived_at: null }, data: { archived_at: new Date(), archive_reason: reason },
+      });
+      if (changed.count) await tx.auditLog.create({ data: {
+        user_id: actorId, action: 'ACCOUNTING_STUDENT_ARCHIVED', entity: 'managed_student', entity_id: id,
+        payload_json: JSON.stringify({ reason, previousStatus: student.status }),
+      } });
+      return { deleted: true, archived: true, id };
+    });
   }
 
   async enrollStudent(dto: EnrollStudentDto, actorId?: string) {
@@ -327,8 +317,8 @@ export class AccountingService {
         },
       }),
     ]);
-    if (!student) throw new NotFoundException('Student not found');
-    if (!group || !group.active) throw new NotFoundException('Active group not found');
+    if (!student || student.archived_at) throw new NotFoundException('الطالب غير متاح للتسجيل.');
+    if (!group || !group.active || group.archived_at) throw new NotFoundException('المجموعة غير متاحة للتسجيل.');
     if (duplicate) throw new ConflictException('Student is already active in this group');
 
     const enrollment = await this.prisma.studentEnrollment.create({
@@ -357,14 +347,17 @@ export class AccountingService {
 
   async enrollStudentsBulk(dto: BulkEnrollStudentsDto, actorId?: string) {
     const group = await this.prisma.accountingGroup.findUnique({ where: { id: dto.groupId } });
-    if (!group || !group.active) throw new NotFoundException('Active group not found');
+    if (!group || !group.active || group.archived_at) throw new NotFoundException('المجموعة غير متاحة للتسجيل.');
 
     // Get all valid students
     const validStudents = await this.prisma.managedStudent.findMany({
-      where: { id: { in: dto.studentIds } },
+      where: { id: { in: dto.studentIds }, archived_at: null },
       select: { id: true },
     });
     const validStudentIds = validStudents.map(s => s.id);
+    if (validStudentIds.length !== new Set(dto.studentIds).size) {
+      throw new BadRequestException('بعض الطلاب محذوفون أو غير موجودين؛ راجع قائمة الاختيار.');
+    }
 
     // Get existing active enrollments for these students in this group
     const existingEnrollments = await this.prisma.studentEnrollment.findMany({
@@ -418,7 +411,9 @@ export class AccountingService {
       throw new BadRequestException('Student is already in the selected group');
     }
     const destination = await this.prisma.accountingGroup.findUnique({ where: { id: dto.toGroupId } });
-    if (!destination || !destination.active) throw new NotFoundException('Destination group not found');
+    if (!destination || !destination.active || destination.archived_at) throw new NotFoundException('Destination group not found');
+    const student = await this.prisma.managedStudent.findUnique({ where: { id: enrollment.student_id }, select: { archived_at: true } });
+    if (!student || student.archived_at) throw new BadRequestException('الطالب محذوف ولا يمكن نقله لمجموعة جديدة.');
 
     const effectiveAt = new Date(dto.effectiveAt);
     if (effectiveAt < enrollment.starts_at) {
@@ -501,13 +496,13 @@ export class AccountingService {
     const dueDate = dto.dueDate ? new Date(dto.dueDate) : new Date(Date.UTC(dto.year, dto.month - 1, 10));
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const groups = await tx.accountingGroup.findMany({ where: { active: true } });
+      const groups = await tx.accountingGroup.findMany({ where: { active: true, archived_at: null } });
       const enrollments = await tx.studentEnrollment.findMany({
         where: {
           starts_at: { lt: nextPeriodStart },
           OR: [{ ends_at: null }, { ends_at: { gte: periodStart } }],
-          student: { status: ManagedStudentStatus.ACTIVE },
-          group: { active: true },
+          student: { status: ManagedStudentStatus.ACTIVE, archived_at: null },
+          group: { active: true, archived_at: null },
         },
       });
 
@@ -666,10 +661,10 @@ export class AccountingService {
       if (!enrollment || enrollment.status !== EnrollmentStatus.ACTIVE) {
         throw new NotFoundException('Active enrollment not found');
       }
-      if (enrollment.student.status !== ManagedStudentStatus.ACTIVE) {
+      if (enrollment.student.archived_at || enrollment.student.status !== ManagedStudentStatus.ACTIVE) {
         throw new BadRequestException('Paused or withdrawn students cannot receive new monthly charges');
       }
-      if (!enrollment.group.active) {
+      if (!enrollment.group.active || enrollment.group.archived_at) {
         throw new BadRequestException('Inactive groups cannot receive new monthly charges');
       }
 
@@ -1303,6 +1298,8 @@ export class AccountingService {
       where: {
         period_id: dto.periodId,
         status: { in: [ChargeStatus.DUE, ChargeStatus.PARTIALLY_PAID] },
+        student: { archived_at: null },
+        group: { archived_at: null },
       },
     });
 
@@ -1337,7 +1334,7 @@ export class AccountingService {
   }
 
   async listAlerts(periodId?: string) {
-    const where: any = {};
+    const where: any = { student: { archived_at: null } };
     if (periodId) where.period_id = periodId;
 
     return this.prisma.collectionAlert.findMany({
@@ -1374,8 +1371,8 @@ export class AccountingService {
 
   async getDashboardStats() {
     const [studentsCount, groupsCount, paymentsSum, expensesSum, recentExpenses, periods] = await Promise.all([
-      this.prisma.managedStudent.count({ where: { status: 'ACTIVE' } }),
-      this.prisma.accountingGroup.count({ where: { active: true } }),
+      this.prisma.managedStudent.count({ where: { status: 'ACTIVE', archived_at: null } }),
+      this.prisma.accountingGroup.count({ where: { active: true, archived_at: null } }),
       this.prisma.accountingPayment.aggregate({
         _sum: { amount: true },
         where: { status: 'APPROVED' },

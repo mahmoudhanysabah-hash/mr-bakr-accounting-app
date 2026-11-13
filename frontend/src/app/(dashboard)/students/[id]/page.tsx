@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import api from '@/lib/axios';
 import { getApiErrorMessage } from '@/lib/error';
 import { getBackendBaseUrl } from '@/lib/backend-url';
+import ArchiveEntityDialog from '@/components/accounting/archive-entity-dialog';
+import useAccountingManager from '@/hooks/use-accounting-manager';
 import {
   CartesianGrid,
   Line,
@@ -28,10 +30,13 @@ import {
   FileDown,
   Printer,
   ArrowLeftRight,
-  Pencil
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 
 export default function StudentDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+  const canManage = useAccountingManager();
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const router = useRouter();
   const unwrappedParams = React.use(params);
   const { id } = unwrappedParams;
@@ -454,7 +459,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
   return (
     <div className="space-y-8 font-cairo" dir="rtl">
       {/* Top Breadcrumb & Action Header */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+      <div className="flex flex-wrap justify-between items-center gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div className="flex items-center gap-3">
           <button onClick={() => router.push('/students')} className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer">
             <ArrowRight className="w-5 h-5" />
@@ -462,7 +467,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-slate-800">{student.full_name}</h1>
-              <button 
+              {!student.archived_at && <button
                 onClick={() => {
                   setEditFullName(student.full_name || '');
                   setEditStudentPhone(student.student_phone || '');
@@ -475,7 +480,8 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
                 title="تعديل بيانات الطالب"
               >
                 <Pencil className="w-4 h-4" />
-              </button>
+              </button>}
+              {!student.archived_at && canManage && <button type="button" onClick={() => setShowDeleteModal(true)} title="حذف الطالب من النظام" className="rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100"><Trash2 className="h-4 w-4" /></button>}
             </div>
             <p className="text-slate-500 text-sm mt-0.5">كود الحساب المميز: <span className="font-black text-slate-700">{student.code}</span></p>
           </div>
@@ -498,6 +504,7 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
           </button>
           <button 
             onClick={() => setShowEnrollModal(true)} 
+            disabled={Boolean(student.archived_at)}
             className="bg-slate-800 hover:bg-slate-700 text-white px-4.5 py-3 rounded-xl font-bold flex items-center gap-2 cursor-pointer text-sm"
           >
             <Plus className="w-4.5 h-4.5" />
@@ -505,6 +512,8 @@ export default function StudentDetailsPage({ params }: { params: Promise<{ id: s
           </button>
         </div>
       </div>
+      {student.archived_at && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-900">الطالب محذوف من قوائم النظام. ده سجله المحفوظ في الأرشيف، وكل الحسابات والدرجات والحضور القديمين موجودين.{student.archive_reason ? ` سبب الحذف: ${student.archive_reason}` : ''}</p>}
+      {showDeleteModal && <ArchiveEntityDialog kind="student" id={id} name={student.full_name} onCancel={() => setShowDeleteModal(false)} onDeleted={() => { setShowDeleteModal(false); router.push('/students'); }} />}
 
       {/* Stats Cards Ledger */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

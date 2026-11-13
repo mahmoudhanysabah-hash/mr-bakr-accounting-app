@@ -28,7 +28,7 @@ export const enrollmentSelect = {
   teaching_removal_reason: true,
   teaching_last_session: { select: lessonSelect },
   teaching_removed_by: { select: { name: true } },
-  student: { select: { id: true, full_name: true, code: true, guardian_name: true } },
+  student: { select: { id: true, full_name: true, code: true, guardian_name: true, archived_at: true } },
 } satisfies Prisma.StudentEnrollmentSelect;
 
 export type RosterEnrollment = Prisma.StudentEnrollmentGetPayload<{ select: typeof enrollmentSelect }>;
@@ -44,6 +44,7 @@ export function compareLessons(left: LessonRef, right: LessonRef) {
 export function includesLesson(enrollment: RosterEnrollment, lesson: LessonRef) {
   const time = lessonTime(lesson);
   if (enrollment.group_id !== lesson.group_id || enrollment.starts_at > time) return false;
+  if (enrollment.student?.archived_at && time >= enrollment.student.archived_at) return false;
   if (enrollment.teaching_last_session) return compareLessons(lesson, enrollment.teaching_last_session) <= 0;
   return enrollment.teaching_continues_after_end || !enrollment.ends_at || time < enrollment.ends_at;
 }

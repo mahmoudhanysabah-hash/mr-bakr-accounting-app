@@ -201,6 +201,8 @@ model ManagedStudent {
   paused_at      DateTime?
   withdrawn_at   DateTime?
   exit_reason    String?
+  archived_at    DateTime?
+  archive_reason String?
   notes                    String?
   credit_balance           Decimal              @default(0) @db.Decimal(12, 2)
   created_at               DateTime             @default(now())
@@ -222,6 +224,7 @@ model ManagedStudent {
   @@index([student_phone])
   @@index([guardian_phone])
   @@index([status])
+  @@index([archived_at])
   @@map("accounting_students")
 }
 
@@ -237,6 +240,8 @@ model AccountingGroup {
   default_student_target     Int?
   default_revenue_target     Decimal?            @db.Decimal(12, 2)
   active                     Boolean             @default(true)
+  archived_at                DateTime?
+  archive_reason             String?
   starts_at                  DateTime?
   ends_at                    DateTime?
   created_at                 DateTime            @default(now())
@@ -256,6 +261,7 @@ model AccountingGroup {
 
   @@index([name])
   @@index([type, active])
+  @@index([archived_at])
   @@map("accounting_groups")
 }
 

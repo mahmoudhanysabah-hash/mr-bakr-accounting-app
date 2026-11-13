@@ -26,7 +26,7 @@ export class TodayLessonService {
       });
       if (!manager && !myGroups.length) return { day, lessons: [] };
       const lessons = await db.teachingSession.findMany({
-        where: { session_date: dayRange, group_id: manager ? undefined : { in: [...new Set(myGroups.map((entry) => entry.group_id))] } },
+        where: { session_date: dayRange, group: { archived_at: null }, group_id: manager ? undefined : { in: [...new Set(myGroups.map((entry) => entry.group_id))] } },
         select: { ...lessonSelect, group: { select: groupSelect }, attendance_assistant_id: true, academic_assistant_id: true },
         orderBy: [{ starts_at: { sort: 'asc', nulls: 'last' } }, { session_date: 'asc' }, { created_at: 'asc' }, { id: 'asc' }],
       });

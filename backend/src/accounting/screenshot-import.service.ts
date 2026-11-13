@@ -125,6 +125,7 @@ export class ScreenshotImportService {
               default_sessions_per_month: row.sessionsCount,
             },
           });
+          if (group.archived_at) throw new BadRequestException('المجموعة محذوفة من النظام؛ لا يمكن إعادة استخدامها في الاستيراد.');
           groups.set(groupKey, group);
         }
 
@@ -149,6 +150,7 @@ export class ScreenshotImportService {
               status: ManagedStudentStatus.ACTIVE,
             },
           });
+          if (student.archived_at) throw new BadRequestException('الطالب محذوف من النظام؛ سجله محفوظ في الأرشيف.');
           students.set(studentKey, student);
         }
 

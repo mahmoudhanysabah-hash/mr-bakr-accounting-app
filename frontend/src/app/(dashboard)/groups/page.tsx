@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import api from '@/lib/axios';
 import { getApiErrorMessage } from '@/lib/error';
+import ArchiveEntityDialog from '@/components/accounting/archive-entity-dialog';
+import useAccountingManager from '@/hooks/use-accounting-manager';
 import { 
   Plus, 
   Users, 
@@ -16,7 +18,12 @@ import {
 } from 'lucide-react';
 
 export default function GroupsPage() {
+  const canManage = useAccountingManager();
   const [groups, setGroups] = useState<any[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [notice, setNotice] = useState('');
+  const [pageError, setPageError] = useState('');
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -44,17 +51,18 @@ export default function GroupsPage() {
   const [modalError, setModalError] = useState('');
   const [modalLoading, setModalLoading] = useState(false);
 
-  const fetchGroups = () => {
+  const fetchGroups = useCallback(() => {
     setLoading(true);
-    api.get('/accounting/groups')
+    setPageError('');
+    return api.get('/accounting/groups', { params: { archived: showArchived } })
       .then(res => setGroups(res.data?.data || []))
-      .catch(e => console.error(e))
+      .catch(e => setPageError(getApiErrorMessage(e, 'تعذّر تحميل المجموعات.')))
       .finally(() => setLoading(false));
-  };
+  }, [showArchived]);
 
   useEffect(() => {
     fetchGroups();
-  }, []);
+  }, [fetchGroups]);
 
   const handleAddGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,16 +122,9 @@ export default function GroupsPage() {
   };
 
   const handleDeleteGroup = async (id: string, name: string) => {
-    if (!window.confirm(`هل أنت متأكد من حذف المجموعة "${name}"؟ إذا كان بها طلاب سيتم أرشفتها فقط.`)) {
-      return;
-    }
-    
-    try {
-      await api.delete(`/accounting/groups/${id}`);
-      fetchGroups();
-    } catch (err: any) {
-      alert(getApiErrorMessage(err, 'فشل حذف المجموعة.'));
-    }
+    if (!canManage) return;
+    setNotice('');
+    setDeleteTarget({ id, name });
   };
 
   const openBatchModal = async (groupId: string) => {
@@ -186,19 +187,25 @@ export default function GroupsPage() {
   return (
     <div className="space-y-8 font-cairo" dir="rtl">
       {/* Action Header */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+      <div className="flex flex-wrap justify-between items-center gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">المجموعات الدراسية (الجروبات)</h1>
+          <h1 className="text-2xl font-bold text-slate-800">{showArchived ? 'أرشيف المجموعات المحذوفة' : 'المجموعات الدراسية (الجروبات)'}</h1>
           <p className="text-slate-500 text-sm mt-1">تحديد المجموعات وتعيين أسعار الحصص والمستهدفات المالية</p>
         </div>
-        <button 
+        <select aria-label="عرض المجموعات" value={showArchived ? 'archived' : 'current'} onChange={(event) => { setShowArchived(event.target.value === 'archived'); setNotice(''); }} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-bold text-slate-700">
+          <option value="current">المجموعات الحالية</option>
+          <option value="archived">المجموعات المحذوفة — الأرشيف</option>
+        </select>
+        {!showArchived && canManage && <button
           onClick={() => setShowAddModal(true)} 
           className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 shadow-md shadow-emerald-500/10 cursor-pointer text-sm"
         >
           <Plus className="w-4.5 h-4.5" />
           <span>إنشاء مجموعة جديدة</span>
-        </button>
+        </button>}
       </div>
+      {notice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-bold text-emerald-900">{notice}</p>}
+      {pageError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{pageError}</p>}
 
       {/* Groups List Grid */}
       {loading ? (
@@ -224,7 +231,7 @@ export default function GroupsPage() {
                 <div className="flex items-center gap-3">
                   <h3 className="text-lg font-bold text-slate-800 pr-2 border-r-4 border-emerald-500">{group.name}</h3>
                   <div className="flex gap-1 relative z-10">
-                    <button 
+                    {!showArchived && canManage && <button
                       onClick={() => {
                         setEditingGroupId(group.id);
                         setName(group.name);
@@ -241,17 +248,18 @@ export default function GroupsPage() {
                       title="تعديل إعدادات المجموعة"
                     >
                       <Pencil className="w-4 h-4" />
-                    </button>
-                    <button 
+                    </button>}
+                    {!showArchived && canManage && <button
                       onClick={() => handleDeleteGroup(group.id, group.name)}
                       className="p-1.5 bg-red-50 hover:bg-red-100 text-red-500 rounded-lg cursor-pointer transition-colors"
                       title="حذف المجموعة"
                     >
                       <Trash2 className="w-4 h-4" />
-                    </button>
+                    </button>}
                   </div>
                 </div>
                 <span className="text-xs text-slate-400 font-bold block mt-1.5">كود المجموعة: {group.code}</span>
+                {showArchived && <p className="mt-3 text-xs leading-6 text-slate-600">محذوفة من القوائم، والسجل محفوظ.{group.archive_reason ? ` السبب: ${group.archive_reason}` : ''}</p>}
 
                 <div className="mt-6 space-y-3.5 border-t border-slate-50 pt-4 text-sm font-semibold">
                   <div className="flex justify-between items-center text-slate-600">
@@ -285,23 +293,29 @@ export default function GroupsPage() {
                 <span className={`inline-flex items-center gap-1 text-xs font-black ${group.active ? 'text-emerald-600' : 'text-slate-400'}`}>
                   <CheckCircle2 className="w-4 h-4" /> {group.active ? 'نشطة حالياً' : 'موقوفة'}
                 </span>
-                <button 
+                {!showArchived && <button
                   onClick={() => openBatchModal(group.id)}
                   className="bg-slate-800 hover:bg-slate-700 text-white p-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
                   disabled={!group.active}
                 >
                   <UserPlus className="w-4 h-4" /> إضافة طلاب
-                </button>
+                </button>}
               </div>
             </div>
           ))}
           {groups.length === 0 && (
             <div className="col-span-full py-16 text-center text-slate-400 font-bold">
-              لا توجد مجموعات مسجلة بالنظام حالياً.
+              {showArchived ? 'لا توجد مجموعات محذوفة في الأرشيف.' : 'لا توجد مجموعات مسجلة بالنظام حالياً.'}
             </div>
           )}
         </div>
       )}
+
+      {deleteTarget && <ArchiveEntityDialog kind="group" id={deleteTarget.id} name={deleteTarget.name} onCancel={() => setDeleteTarget(null)} onDeleted={() => {
+        setDeleteTarget(null);
+        setNotice('تم حذف المجموعة من قوائم النظام؛ سجلاتها القديمة محفوظة في الأرشيف.');
+        void fetchGroups();
+      }} />}
 
       {/* Add Group Modal */}
       {showAddModal && (

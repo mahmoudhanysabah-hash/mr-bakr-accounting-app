@@ -11,6 +11,7 @@ import {
   IsPhoneNumber,
   IsString,
   Max,
+  MaxLength,
   Min,
   MinLength,
   ValidateNested,
@@ -23,6 +24,13 @@ import {
   AcademicTrack,
   ManagedStudentStatus,
 } from '@prisma/client';
+
+export class ArchiveAccountingEntityDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  reason?: string;
+}
 
 export class CreateManagedStudentDto {
   @IsOptional()

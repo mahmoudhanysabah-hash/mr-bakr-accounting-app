@@ -41,6 +41,7 @@ import {
   UpdateAlertStatusDto,
   UpdateManagedStudentDto,
   BulkEnrollStudentsDto,
+  ArchiveAccountingEntityDto,
 } from './dto/accounting.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -85,8 +86,9 @@ export class AccountingController {
     @Query('q') q?: string,
     @Query('status') status?: ManagedStudentStatus,
     @Query('groupId') groupId?: string,
+    @Query('archived') archived?: string,
   ) {
-    return this.accounting.listStudents(q, status, groupId);
+    return this.accounting.listStudents(q, status, groupId, archived === 'true');
   }
 
   @Get('students/:id')
@@ -110,8 +112,8 @@ export class AccountingController {
   }
 
   @Get('groups')
-  listGroups(@Query('active') active?: string) {
-    return this.accounting.listGroups(active === undefined ? undefined : active === 'true');
+  listGroups(@Query('active') active?: string, @Query('archived') archived?: string) {
+    return this.accounting.listGroups(active === undefined ? undefined : active === 'true', archived === 'true');
   }
 
   @Patch('groups/:id')
@@ -126,8 +128,14 @@ export class AccountingController {
 
   @Delete('groups/:id')
   @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
-  deleteGroup(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.accounting.deleteGroup(id, user?.id);
+  deleteGroup(@Param('id') id: string, @Body() dto: ArchiveAccountingEntityDto, @CurrentUser() user: any) {
+    return this.accounting.deleteGroup(id, user?.id, dto.reason);
+  }
+
+  @Delete('students/:id')
+  @Roles(Role.ADMIN, Role.FINANCE_MANAGER)
+  deleteStudent(@Param('id') id: string, @Body() dto: ArchiveAccountingEntityDto, @CurrentUser() user: any) {
+    return this.accounting.deleteStudent(id, dto, user?.id);
   }
 
   @Post('enrollments')
